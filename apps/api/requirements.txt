@@ -10,3 +10,5 @@ shapely==2.0.6
 pyproj==3.7.0
 httpx==0.28.1
 pytest==8.3.4
+
+GeoAlchemy2==0.16.0
