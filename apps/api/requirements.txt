@@ -14,3 +14,5 @@ pytest==8.3.4
 GeoAlchemy2==0.16.0
 reportlab==4.5.1
 pypdf==6.13.2
+
+weasyprint==69.0
