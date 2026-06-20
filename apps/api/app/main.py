@@ -13,6 +13,15 @@ from app.geometry_engine import PolygonValidationResult, validate_polygon
 from app.ocr import OcrResult, enforce_ocr_rate_limit, extract_text_from_document
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
 from app.uploads import DocumentUploadResponse, create_document_from_upload
+from app.workflow import (
+    AuditResponse,
+    ProjectValidationResponse,
+    ProjectWorkflowResponse,
+    create_project_audit,
+    get_project_state,
+    mark_project_ocr_extracted,
+    validate_project_for_audit,
+)
 
 app = FastAPI(
     title=settings.app_name,
@@ -113,6 +122,26 @@ def upload_project_document(
     return create_document_from_upload(project_id, file, db)
 
 
+@app.get("/api/projects/{project_id}/workflow", response_model=ProjectWorkflowResponse, tags=["workflow"])
+def get_project_workflow(project_id: str, db: Session = Depends(get_db)) -> ProjectWorkflowResponse:
+    state = get_project_state(project_id, db)
+    return ProjectWorkflowResponse(project_id=project_id, state=state)
+
+
+@app.post(
+    "/api/projects/{project_id}/validate",
+    response_model=ProjectValidationResponse,
+    tags=["workflow"],
+)
+def validate_project(project_id: str, db: Session = Depends(get_db)) -> ProjectValidationResponse:
+    return validate_project_for_audit(project_id, db)
+
+
+@app.post("/api/projects/{project_id}/audit", response_model=AuditResponse, tags=["audits"])
+def run_project_audit(project_id: str, db: Session = Depends(get_db)) -> AuditResponse:
+    return create_project_audit(project_id, db)
+
+
 def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> OcrResult:
     project = (
         db.execute(text("SELECT id FROM projects WHERE id = :project_id"), {"project_id": project_id})
@@ -137,6 +166,7 @@ def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> 
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Document does not belong to project")
 
     text_content, provider = extract_text_from_document(document["storage_path"], document["content_type"])
+    mark_project_ocr_extracted(project_id, db)
     return OcrResult(provider=provider, text=text_content, document_id=document["id"], project_id=project["id"])
 
 
