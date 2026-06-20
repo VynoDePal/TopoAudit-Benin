@@ -1,3 +1,5 @@
+import type { FeatureCollection, Polygon } from "geojson";
+
 export type RiskLevel = "low" | "moderate" | "high";
 
 export type AuditResult = {
@@ -23,7 +25,7 @@ export const demoAudit: AuditResult = {
   ]
 };
 
-export const dashboardParcels: GeoJSON.FeatureCollection<GeoJSON.Polygon> = {
+export const dashboardParcels: FeatureCollection<Polygon> = {
   type: "FeatureCollection",
   features: [
     {
