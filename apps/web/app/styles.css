@@ -20,12 +20,16 @@ body {
   padding: 2rem;
 }
 
-.hero {
-  max-width: 840px;
-  padding: 3rem;
+.hero,
+.validation-panel {
   border-radius: 28px;
   background: white;
   box-shadow: 0 24px 80px rgb(19 32 24 / 12%);
+}
+
+.hero {
+  max-width: 840px;
+  padding: 3rem;
 }
 
 .eyebrow {
@@ -65,6 +69,193 @@ h1 {
   color: inherit;
   text-decoration: none;
   background: #fbfdfc;
+}
+
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 14px;
+  padding: 0.85rem 1rem;
+  background: #0f7b46;
+  color: white;
+  font-weight: 800;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid #c8d8ce;
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #fbfdfc;
+  color: #132018;
+}
+
+.validation-panel {
+  width: min(1120px, 100%);
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+  padding: 1.5rem;
+}
+
+.validation-header,
+.actions-row,
+.result-grid,
+.form-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.validation-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.validation-header h2 {
+  margin: 0;
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  line-height: 1;
+}
+
+.validation-header p:not(.eyebrow),
+.status-message,
+.warning-list {
+  color: #48564e;
+  line-height: 1.7;
+}
+
+.status-pill,
+.confidence {
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-weight: 800;
+}
+
+.status-ok,
+.good {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-waiting,
+.warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.danger {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.form-grid,
+.result-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.form-grid label {
+  display: grid;
+  gap: 0.4rem;
+  color: #48564e;
+  font-weight: 700;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid #dbe8df;
+  border-radius: 18px;
+}
+
+.coordinate-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+.coordinate-table th,
+.coordinate-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #dbe8df;
+  text-align: left;
+}
+
+.coordinate-table th {
+  background: #f0f7f3;
+  color: #48564e;
+  font-size: 0.9rem;
+}
+
+.coordinate-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sr-cell-label {
+  display: block;
+}
+
+.ghost-button {
+  border: 1px solid #c8d8ce;
+  background: #fbfdfc;
+  color: #0f7b46;
+}
+
+.actions-row {
+  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+  align-items: center;
+}
+
+.status-message,
+.warning-list p {
+  margin: 0;
+}
+
+.warning-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.warning-list p {
+  border-left: 4px solid #f59e0b;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  background: #fffbeb;
+}
+
+.result-metric {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+  border: 1px solid #dbe8df;
+  border-radius: 18px;
+  background: #fbfdfc;
+}
+
+.result-metric span {
+  color: #66756c;
 }
 
 .card span {

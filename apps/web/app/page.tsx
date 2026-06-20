@@ -1,6 +1,7 @@
 import dynamic from "next/dynamic";
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
+import { apiBaseUrl } from "./components/ocrValidationShared";
+const OcrValidationInterface = dynamic(() => import("./components/OcrValidationInterface"), { ssr: false });
 const ParcelMap = dynamic(() => import("./components/ParcelMap"), { ssr: false });
 
 export default function Home() {
@@ -28,6 +29,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      <OcrValidationInterface />
       <ParcelMap />
     </main>
   );
