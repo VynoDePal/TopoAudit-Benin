@@ -178,6 +178,59 @@ def _compute_audit_result(inputs: _AuditInputs) -> tuple[int, str, list[str]]:
     return technical_score, risk_level, warnings
 
 
+AUDIT_INPUTS_DDL = text(
+    """
+    CREATE TABLE IF NOT EXISTS audit_inputs (
+        project_id VARCHAR(36) PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        extraction_score INTEGER NOT NULL DEFAULT 87,
+        declared_surface_m2 DOUBLE PRECISION,
+        calculated_surface_m2 DOUBLE PRECISION,
+        invalid_geometry BOOLEAN NOT NULL DEFAULT FALSE
+    )
+    """
+)
+
+
+def ensure_audit_inputs_table(bind) -> None:
+    """Crée la table ``audit_inputs`` (référencée en SQL brut, hors ORM) — appelée au startup."""
+    with bind.begin() as conn:
+        conn.execute(AUDIT_INPUTS_DDL)
+
+
+def upsert_audit_inputs(
+    project_id: str,
+    db: Session,
+    *,
+    extraction_score: int = 87,
+    declared_surface_m2: float | None = None,
+    calculated_surface_m2: float | None = None,
+    invalid_geometry: bool = False,
+) -> None:
+    """Enregistre les entrées d'audit calculées à la validation (upsert par projet)."""
+    db.execute(
+        text(
+            """
+            INSERT INTO audit_inputs
+                (project_id, extraction_score, declared_surface_m2, calculated_surface_m2, invalid_geometry)
+            VALUES (:pid, :es, :dec, :calc, :inv)
+            ON CONFLICT (project_id) DO UPDATE SET
+                extraction_score = EXCLUDED.extraction_score,
+                declared_surface_m2 = EXCLUDED.declared_surface_m2,
+                calculated_surface_m2 = EXCLUDED.calculated_surface_m2,
+                invalid_geometry = EXCLUDED.invalid_geometry
+            """
+        ),
+        {
+            "pid": project_id,
+            "es": extraction_score,
+            "dec": declared_surface_m2,
+            "calc": calculated_surface_m2,
+            "inv": invalid_geometry,
+        },
+    )
+    db.commit()
+
+
 def create_project_audit(project_id: str, db: Session) -> AuditResponse:
     inputs = _load_audit_inputs(project_id, db)
     technical_score, risk_level, warnings = _compute_audit_result(inputs)
