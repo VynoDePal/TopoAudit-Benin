@@ -1,6 +1,7 @@
 import hashlib
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.crs import transform_coordinate_to_wgs84
+from app.ocr import extract_text_from_document
+from app.surface_parser import parse_surface_to_m2
 from app.workflow import mark_project_uploaded
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -30,6 +34,160 @@ class DocumentUploadResponse(BaseModel):
     size_bytes: int = Field(ge=0)
     sha256: str
     storage_path: str
+
+
+@dataclass(frozen=True)
+class ExtractedSurveyPoint:
+    label: str
+    x: float
+    y: float
+
+
+@dataclass(frozen=True)
+class ExtractedParcel:
+    label: str
+    declared_surface_m2: int | None
+    points: list[ExtractedSurveyPoint]
+
+
+_COORDINATE_LINE_PATTERN = re.compile(
+    r"^\s*(?P<label>[A-Za-z]{0,4}\d+[A-Za-z0-9_-]*)\s*[:;,-]?\s+"
+    r"(?P<x>\d{2,}(?:[.,]\d+)?)\s+"
+    r"(?P<y>\d{2,}(?:[.,]\d+)?)\s*$"
+)
+_PARCEL_HEADING_PATTERN = re.compile(r"\bparcelle\s+(?P<label>[A-Za-z0-9_-]+)", re.IGNORECASE)
+_SURFACE_LINE_PATTERN = re.compile(r"\b(surface|superficie)\b", re.IGNORECASE)
+
+
+def _parse_coordinate_line(line: str) -> ExtractedSurveyPoint | None:
+    match = _COORDINATE_LINE_PATTERN.match(line.strip())
+    if match is None:
+        return None
+
+    return ExtractedSurveyPoint(
+        label=match.group("label"),
+        x=float(match.group("x").replace(",", ".")),
+        y=float(match.group("y").replace(",", ".")),
+    )
+
+
+def extract_parcels_from_ocr_text(ocr_text: str) -> list[ExtractedParcel]:
+    parcels: list[ExtractedParcel] = []
+    current_label: str | None = None
+    current_surface: int | None = None
+    current_points: list[ExtractedSurveyPoint] = []
+
+    def flush() -> None:
+        nonlocal current_label, current_surface, current_points
+        if len(current_points) >= 3:
+            label = current_label or f"Parcelle {len(parcels) + 1}"
+            parcels.append(ExtractedParcel(label=label, declared_surface_m2=current_surface, points=current_points))
+        current_label = None
+        current_surface = None
+        current_points = []
+
+    for raw_line in ocr_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        heading = _PARCEL_HEADING_PATTERN.search(line)
+        if heading:
+            flush()
+            current_label = f"Parcelle {heading.group('label')}"
+
+        if _SURFACE_LINE_PATTERN.search(line):
+            parsed_surface = parse_surface_to_m2(line)
+            if parsed_surface is not None:
+                current_surface = parsed_surface
+
+        point = _parse_coordinate_line(line)
+        if point is None:
+            continue
+
+        if current_points and point.label in {existing.label for existing in current_points}:
+            flush()
+        if current_label is None:
+            current_label = f"Parcelle {len(parcels) + 1}"
+        current_points.append(point)
+
+    flush()
+    return parcels
+
+
+def _insert_extracted_parcels(
+    *,
+    project_id: str,
+    document_id: str,
+    storage_path: str,
+    content_type: str,
+    db: Session,
+) -> None:
+    ocr_text, _provider = extract_text_from_document(storage_path, content_type)
+    parcels = extract_parcels_from_ocr_text(ocr_text)
+    if not parcels:
+        return
+
+    levee_id = str(uuid4())
+    created_at = datetime.now(UTC)
+    db.execute(
+        text(
+            """
+            INSERT INTO levees (id, project_id, label, source_document_id, detected_crs, created_at)
+            VALUES (:id, :project_id, :label, :source_document_id, :detected_crs, :created_at)
+            """
+        ),
+        {
+            "id": levee_id,
+            "project_id": project_id,
+            "label": "Levée extraite OCR",
+            "source_document_id": document_id,
+            "detected_crs": "EPSG:32631",
+            "created_at": created_at,
+        },
+    )
+
+    for parcel in parcels:
+        parcel_id = str(uuid4())
+        db.execute(
+            text(
+                """
+                INSERT INTO parcels (id, project_id, levee_id, label, declared_surface_m2, detected_crs, created_at)
+                VALUES (:id, :project_id, :levee_id, :label, :declared_surface_m2, :detected_crs, :created_at)
+                """
+            ),
+            {
+                "id": parcel_id,
+                "project_id": project_id,
+                "levee_id": levee_id,
+                "label": parcel.label,
+                "declared_surface_m2": parcel.declared_surface_m2,
+                "detected_crs": "EPSG:32631",
+                "created_at": created_at,
+            },
+        )
+        for point in parcel.points:
+            longitude, latitude = transform_coordinate_to_wgs84(point.x, point.y)
+            db.execute(
+                text(
+                    """
+                    INSERT INTO survey_points (id, parcel_id, label, source_x, source_y, confidence, geom, created_at)
+                    VALUES (:id, :parcel_id, :label, :source_x, :source_y, :confidence,
+                            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326), :created_at)
+                    """
+                ),
+                {
+                    "id": str(uuid4()),
+                    "parcel_id": parcel_id,
+                    "label": point.label,
+                    "source_x": point.x,
+                    "source_y": point.y,
+                    "longitude": longitude,
+                    "latitude": latitude,
+                    "confidence": None,
+                    "created_at": created_at,
+                },
+            )
 
 
 def _safe_project_segment(project_id: str) -> str:
@@ -150,6 +308,13 @@ def create_document_from_upload(project_id: str, file: UploadFile, db: Session) 
                 "storage_path": storage_path,
                 "created_at": datetime.now(UTC),
             },
+        )
+        _insert_extracted_parcels(
+            project_id=project_id,
+            document_id=document_id,
+            storage_path=storage_path,
+            content_type=content_type,
+            db=db,
         )
         mark_project_uploaded(project_id, db)
     except Exception:
