@@ -1,6 +1,7 @@
-from fastapi.testclient import TestClient
-
 from types import SimpleNamespace
+
+import httpx
+from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
@@ -60,6 +61,51 @@ def teardown_function():
     app.dependency_overrides.clear()
 
 
+class FakeGeminiResponse:
+    def __init__(self, payload: dict | None = None, status_error: Exception | None = None) -> None:
+        self.payload = payload or {}
+        self.status_error = status_error
+
+    def raise_for_status(self):
+        if self.status_error:
+            raise self.status_error
+
+    def json(self):
+        return self.payload
+
+
+class FakeGeminiClient:
+    last_request = None
+    response = FakeGeminiResponse(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "Surface déclarée: 05a 49ca\nP1 403825.84 707630.38\nP2 403836.57 707626.36"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    def __init__(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def post(self, url: str, headers: dict[str, str], json: dict):
+        FakeGeminiClient.last_request = {"url": url, "headers": headers, "json": json, "timeout": self.timeout}
+        return FakeGeminiClient.response
+
+
 def test_ocr_returns_mock_text_when_azure_key_is_missing():
     project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
     document = SimpleNamespace(
@@ -114,6 +160,103 @@ def test_ocr_rejects_missing_project_before_processing_document():
     response = client.post("/api/projects/missing/documents/document-1/ocr")
 
     assert response.status_code == 404
+
+
+def test_ocr_uses_gemini_provider_for_utm_coordinates_and_surface(monkeypatch, tmp_path):
+    document_path = tmp_path / "plan.png"
+    document_path.write_bytes(b"fake image bytes")
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id="document-1",
+        project_id="project-1",
+        filename="plan.png",
+        content_type="image/png",
+        storage_path=str(document_path),
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "gemini")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "test-gemini-key")
+    monkeypatch.setattr("app.ocr.httpx.Client", FakeGeminiClient)
+    FakeGeminiClient.last_request = None
+    FakeGeminiClient.response = FakeGeminiResponse(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": "Surface déclarée: 05a 49ca\nP1 403825.84 707630.38\nP2 403836.57 707626.36"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "gemini"
+    assert "Surface déclarée: 05a 49ca" in payload["text"]
+    assert "403825.84 707630.38" in payload["text"]
+    assert FakeGeminiClient.last_request is not None
+    assert FakeGeminiClient.last_request["url"].endswith("/models/gemini-2.5-flash:generateContent")
+    assert FakeGeminiClient.last_request["headers"] == {"x-goog-api-key": "test-gemini-key"}
+    parts = FakeGeminiClient.last_request["json"]["contents"][0]["parts"]
+    assert "UTM zone 31N" in parts[0]["text"]
+    assert parts[1]["inline_data"]["mime_type"] == "image/png"
+
+
+def test_ocr_falls_back_to_mock_when_gemini_key_is_missing(monkeypatch):
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id="document-1",
+        project_id="project-1",
+        filename="plan.png",
+        content_type="image/png",
+        storage_path="/tmp/plan.png",
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "gemini")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "")
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr")
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "mock"
+    assert response.json()["text"] == MOCK_OCR_TEXT
+
+
+def test_ocr_maps_gemini_http_errors_to_bad_gateway(monkeypatch, tmp_path):
+    document_path = tmp_path / "plan.png"
+    document_path.write_bytes(b"fake image bytes")
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id="document-1",
+        project_id="project-1",
+        filename="plan.png",
+        content_type="image/png",
+        storage_path=str(document_path),
+    )
+    request = httpx.Request("POST", "https://generativelanguage.googleapis.com")
+    response = httpx.Response(500, request=request)
+    FakeGeminiClient.response = FakeGeminiResponse(
+        status_error=httpx.HTTPStatusError("boom", request=request, response=response)
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "gemini")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "test-gemini-key")
+    monkeypatch.setattr("app.ocr.httpx.Client", FakeGeminiClient)
+    client = TestClient(app)
+
+    api_response = client.post("/api/projects/project-1/documents/document-1/ocr")
+
+    assert api_response.status_code == 502
+    assert api_response.json()["detail"] == "Gemini OCR request failed"
 
 
 def test_ocr_rate_limit_is_enforced(monkeypatch):

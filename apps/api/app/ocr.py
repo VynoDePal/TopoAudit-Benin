@@ -1,3 +1,4 @@
+import base64
 import time
 from collections import defaultdict, deque
 from pathlib import Path
@@ -71,11 +72,91 @@ def _azure_analyze_url() -> str:
     return f"{endpoint}/documentintelligence/documentModels/{model_id}:analyze?api-version={api_version}"
 
 
+def _gemini_is_configured() -> bool:
+    return bool(settings.gemini_api_key)
+
+
+def _gemini_generate_url() -> str:
+    endpoint = settings.gemini_api_endpoint.rstrip("/")
+    model = settings.gemini_model
+    return f"{endpoint}/models/{model}:generateContent"
+
+
 def extract_text_from_document(storage_path: str, content_type: str | None) -> tuple[str, str]:
-    if not _azure_is_configured():
+    provider = settings.ocr_provider.strip().lower()
+    if provider == "gemini":
+        if not _gemini_is_configured():
+            return MOCK_OCR_TEXT, "mock"
+        return _extract_text_with_gemini(storage_path, content_type), "gemini"
+    if provider == "azure":
+        if not _azure_is_configured():
+            return MOCK_OCR_TEXT, "mock"
+        return _extract_text_with_azure(storage_path, content_type), "azure"
+    if provider == "mock":
         return MOCK_OCR_TEXT, "mock"
 
-    return _extract_text_with_azure(storage_path, content_type), "azure"
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported OCR provider")
+
+
+
+def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> str:
+    path = Path(storage_path)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
+
+    prompt = (
+        "Extract all readable land survey OCR text from this document. "
+        "Focus on UTM zone 31N coordinates, parcel point labels, and declared surfaces. "
+        "Return plain text only, preserving coordinate tables and surface values."
+    )
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": content_type or "application/octet-stream",
+                            "data": base64.b64encode(path.read_bytes()).decode("ascii"),
+                        }
+                    },
+                ],
+            }
+        ]
+    }
+    headers = {"x-goog-api-key": settings.gemini_api_key}
+
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(_gemini_generate_url(), headers=headers, json=payload)
+            response.raise_for_status()
+            return _extract_gemini_text(response.json())
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Gemini OCR request failed",
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Gemini OCR service unavailable",
+        ) from exc
+
+
+def _extract_gemini_text(payload: dict[str, Any]) -> str:
+    texts: list[str] = []
+    for candidate in payload.get("candidates", []):
+        content = candidate.get("content") or {}
+        for part in content.get("parts", []):
+            text = part.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+
+    text_content = "\n".join(texts).strip()
+    if not text_content:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gemini OCR response is empty")
+    return text_content
 
 
 def _extract_text_with_azure(storage_path: str, content_type: str | None) -> str:
