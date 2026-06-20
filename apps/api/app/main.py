@@ -1,13 +1,16 @@
 from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.crs import GEOJSON_CRS, SUPPORTED_SOURCE_CRS, transform_coordinates_to_wgs84
+from app.database import get_db, get_engine
 from app.geometry_engine import PolygonValidationResult, validate_polygon
+from app.ocr import OcrResult, enforce_ocr_rate_limit, extract_text_from_document
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
 
 app = FastAPI(
@@ -57,12 +60,15 @@ class SurfaceRiskRequest(BaseModel):
     calculated_surface_m2: float = Field(ge=0, examples=[551])
 
 
+class OcrRequest(BaseModel):
+    project_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+
+
 def _database_ready() -> bool:
     try:
-        engine = create_engine(settings.database_url, pool_pre_ping=True)
-        with engine.connect() as connection:
+        with get_engine().connect() as connection:
             connection.execute(text("SELECT 1"))
-        engine.dispose()
         return True
     except Exception:
         return False
@@ -90,6 +96,54 @@ def transform_crs(payload: CoordinateTransformRequest) -> CoordinateTransformRes
 @app.post("/api/geometry/validate-polygon", response_model=PolygonValidationResult, tags=["geometry"])
 def validate_polygon_geometry(payload: PolygonValidationRequest) -> PolygonValidationResult:
     return validate_polygon(payload.coordinates, payload.source_crs)
+
+
+def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> OcrResult:
+    project = (
+        db.execute(text("SELECT id FROM projects WHERE id = :project_id"), {"project_id": project_id})
+        .mappings()
+        .first()
+    )
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    document = (
+        db.execute(
+            text("SELECT id, project_id, content_type, storage_path FROM documents WHERE id = :document_id"),
+            {"document_id": document_id},
+        )
+        .mappings()
+        .first()
+    )
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if document["project_id"] != project_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Document does not belong to project")
+
+    text_content, provider = extract_text_from_document(document["storage_path"], document["content_type"])
+    return OcrResult(provider=provider, text=text_content, document_id=document["id"], project_id=project["id"])
+
+
+@app.post("/api/projects/{project_id}/documents/{document_id}/ocr", response_model=OcrResult, tags=["ocr"])
+def run_document_ocr(
+    project_id: str,
+    document_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> OcrResult:
+    enforce_ocr_rate_limit(request)
+    return _run_scoped_document_ocr(project_id, document_id, db)
+
+
+@app.post("/api/ocr", response_model=OcrResult, tags=["ocr"])
+def run_document_ocr_from_body(
+    payload: OcrRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> OcrResult:
+    enforce_ocr_rate_limit(request)
+    return _run_scoped_document_ocr(payload.project_id, payload.document_id, db)
 
 
 @app.post("/api/risk/score-surface", response_model=SurfaceRiskScore, tags=["risk"])
