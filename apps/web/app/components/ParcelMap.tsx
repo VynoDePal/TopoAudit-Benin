@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import maplibregl, { type Map, type StyleSpecification } from "maplibre-gl";
+import { useEffect, useId, useRef } from "react";
+import maplibregl, { type GeoJSONSource, type Map, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 const beninCenter: [number, number] = [2.3158, 9.3077];
@@ -68,9 +68,32 @@ const sampleParcels: GeoJSON.FeatureCollection<GeoJSON.Polygon> = {
   ]
 };
 
-export default function ParcelMap() {
+type ParcelMapProps = {
+  parcels?: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+  title?: string;
+  description?: string;
+};
+
+function fitParcelBounds(map: Map, parcels: GeoJSON.FeatureCollection<GeoJSON.Polygon>) {
+  const bounds = new maplibregl.LngLatBounds();
+  parcels.features.forEach((feature) => {
+    feature.geometry.coordinates[0].forEach((coordinate) => bounds.extend(coordinate as [number, number]));
+  });
+
+  if (!bounds.isEmpty()) {
+    map.fitBounds(bounds, { padding: 80, maxZoom: 17 });
+  }
+}
+
+export default function ParcelMap({
+  parcels = sampleParcels,
+  title = "Polygones GeoJSON sur fond OSM / Esri",
+  description = "La carte charge MapLibre GL JS côté client, superpose des parcelles GeoJSON en EPSG:4326 et conserve l’ordre strict des coordonnées [longitude, latitude]."
+}: ParcelMapProps) {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
+  const initialParcelsRef = useRef(parcels);
+  const titleId = useId();
 
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) {
@@ -89,7 +112,8 @@ export default function ParcelMap() {
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
 
     map.on("load", () => {
-      map.addSource("parcels", { type: "geojson", data: sampleParcels });
+      const initialParcels = initialParcelsRef.current;
+      map.addSource("parcels", { type: "geojson", data: initialParcels });
       map.addLayer({
         id: "parcel-fill",
         type: "fill",
@@ -109,11 +133,7 @@ export default function ParcelMap() {
         }
       });
 
-      const bounds = new maplibregl.LngLatBounds();
-      sampleParcels.features.forEach((feature) => {
-        feature.geometry.coordinates[0].forEach((coordinate) => bounds.extend(coordinate as [number, number]));
-      });
-      map.fitBounds(bounds, { padding: 80, maxZoom: 17 });
+      fitParcelBounds(map, initialParcels);
     });
 
     mapRef.current = map;
@@ -124,15 +144,22 @@ export default function ParcelMap() {
     };
   }, []);
 
+  useEffect(() => {
+    const source = mapRef.current?.getSource("parcels") as GeoJSONSource | undefined;
+    if (!source || !mapRef.current) {
+      return;
+    }
+
+    source.setData(parcels);
+    fitParcelBounds(mapRef.current, parcels);
+  }, [parcels]);
+
   return (
-    <section className="map-panel" aria-labelledby="map-title">
+    <section className="map-panel" aria-labelledby={titleId}>
       <div className="map-copy">
         <p className="eyebrow">Visualisation cartographique</p>
-        <h2 id="map-title">Polygones GeoJSON sur fond OSM / Esri</h2>
-        <p>
-          La carte charge MapLibre GL JS côté client, superpose des parcelles GeoJSON en EPSG:4326
-          et conserve l’ordre strict des coordonnées [longitude, latitude].
-        </p>
+        <h2 id={titleId}>{title}</h2>
+        <p>{description}</p>
       </div>
       <div ref={mapContainer} className="map-container" role="img" aria-label="Carte des parcelles GeoJSON" />
     </section>
