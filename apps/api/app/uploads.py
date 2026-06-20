@@ -103,8 +103,11 @@ def _store_upload(project_id: str, file: UploadFile) -> tuple[str, int, str]:
 
                 size += len(chunk)
                 if size > MAX_UPLOAD_BYTES:
+                    # 413 en littéral : la constante starlette a été renommée selon les
+                    # versions (HTTP_413_CONTENT_TOO_LARGE vs _REQUEST_ENTITY_TOO_LARGE) —
+                    # l'entier est insensible à la version installée.
                     raise HTTPException(
-                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        status_code=413,
                         detail="File exceeds the 25 MB limit",
                     )
 
