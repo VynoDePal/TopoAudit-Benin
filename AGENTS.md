@@ -9,7 +9,7 @@
 - The levée/parcelles schema is represented by `Levee` (`levees`) with `Project.levees` and nullable `Parcel.levee_id` (`levees.id`) so a single levée can own many parcels while legacy project-level parcel access remains compatible.
 
 - API route modules should avoid eager imports that require optional/runtime-only database drivers or GeoAlchemy2; keep database engine creation lazy so existing endpoint tests can import `app.main` in minimal environments.
-- OCR lives in `apps/api/app/ocr.py` and is exposed via `/api/projects/{project_id}/documents/{document_id}/ocr` plus `/api/ocr`; it validates project/document consistency with SQL text queries before OCR, rate-limits per client in memory, uses mock text when Azure credentials are absent, and must never log Azure keys.
+- OCR lives in `apps/api/app/ocr.py` and is exposed via `/api/projects/{project_id}/documents/{document_id}/ocr` plus `/api/ocr`; it validates project/document consistency with SQL text queries before OCR, rate-limits per client in memory, selects Mock/Azure/Gemini through `get_ocr_provider`, falls back to mock when Azure/Gemini credentials are absent, and must never log OCR provider keys.
 - Audit workflow logic lives in `apps/api/app/workflow.py`; `/api/projects/{project_id}/audit` keeps SQL text-query conventions, requires `VALIDATED` before `AUDITED`, and optionally reads project-scoped scoring inputs from an `audit_inputs` table with safe fallback defaults when that table or data is absent.
 
 
