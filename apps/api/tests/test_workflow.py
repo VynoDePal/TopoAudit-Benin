@@ -7,14 +7,18 @@ from app.main import app
 
 
 class FakeResult:
-    def __init__(self, row):
+    def __init__(self, row=None, rows=None):
         self.row = row
+        self.rows = rows or []
 
     def mappings(self):
         return self
 
     def first(self):
         return self.row
+
+    def all(self):
+        return self.rows
 
 
 class FakeWorkflowSession:
@@ -24,14 +28,18 @@ class FakeWorkflowSession:
         project_exists: bool = True,
         status: str | None = "UPLOADED",
         audit_inputs: dict[str, object] | None = None,
+        parcel_rows: list[dict[str, object]] | None = None,
     ) -> None:
         self.project_exists = project_exists
         self.status = status
         self.audit_inputs = audit_inputs
+        self.parcel_rows = parcel_rows or []
         self.committed = False
 
     def execute(self, statement, params: dict[str, str]):
         sql = str(statement)
+        if "FROM parcels p" in sql:
+            return FakeResult(rows=self.parcel_rows)
         if "FROM audit_inputs" in sql:
             return FakeResult(self.audit_inputs)
         if "FROM projects" in sql:
@@ -128,7 +136,7 @@ def test_audit_moves_project_to_audited_and_returns_default_scores():
     assert payload["risk_level"] == "moderate"
     assert payload["warnings"] == [
         "Aucune comparaison cadastrale officielle effectuée.",
-        "Données de surface insuffisantes pour un scoring technique complet.",
+        "Données de surface insuffisantes pour un scoring technique complet de Parcelle validée.",
     ]
     UUID(payload["audit_id"])
     assert session.status == "AUDITED"
@@ -157,7 +165,7 @@ def test_audit_uses_surface_deviation_to_score_risk():
     assert payload["risk_level"] == "moderate"
     assert payload["warnings"] == [
         "Aucune comparaison cadastrale officielle effectuée.",
-        "Écart modéré entre surface déclarée et surface calculée.",
+        "Écart modéré entre surface déclarée et surface calculée pour Parcelle validée.",
     ]
 
 
@@ -182,5 +190,57 @@ def test_audit_prioritizes_invalid_geometry_as_high_risk():
     assert payload["risk_level"] == "high"
     assert payload["warnings"] == [
         "Aucune comparaison cadastrale officielle effectuée.",
-        "Incohérence géométrique détectée sur la parcelle validée.",
+        "Incohérence géométrique détectée sur Parcelle validée.",
     ]
+
+
+def test_audit_scores_each_extracted_parcel_independently_and_aggregates_worst_risk():
+    first_parcel_points = [
+        ("P1", 403825.84, 707630.38),
+        ("P2", 403836.57, 707626.36),
+        ("P3", 403840.12, 707641.10),
+        ("P4", 403829.20, 707645.42),
+    ]
+    second_parcel_points = [
+        ("P1", 403850.0, 707650.0),
+        ("P2", 403860.0, 707650.0),
+        ("P3", 403860.0, 707660.0),
+        ("P4", 403850.0, 707660.0),
+    ]
+    parcel_rows = [
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "declared_surface_m2": 176,
+            "detected_crs": "EPSG:32631",
+            "source_x": x,
+            "source_y": y,
+        }
+        for _label, x, y in first_parcel_points
+    ] + [
+        {
+            "parcel_id": "parcel-b",
+            "label": "Parcelle B",
+            "declared_surface_m2": 20,
+            "detected_crs": "EPSG:32631",
+            "source_x": x,
+            "source_y": y,
+        }
+        for _label, x, y in second_parcel_points
+    ]
+    session = FakeWorkflowSession(status="VALIDATED", parcel_rows=parcel_rows)
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/audit")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["risk_level"] == "high"
+    assert payload["technical_score"] == 48
+    assert [parcel["label"] for parcel in payload["parcels"]] == ["Parcelle A", "Parcelle B"]
+    assert [parcel["risk_level"] for parcel in payload["parcels"]] == ["low", "high"]
+    assert payload["parcels"][0]["declared_surface_m2"] == 176
+    assert payload["parcels"][1]["declared_surface_m2"] == 20
+    assert "Parcelle B" in payload["warnings"][1]
+
