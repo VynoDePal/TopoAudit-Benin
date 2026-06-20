@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.workflow import mark_project_uploaded
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {
@@ -147,7 +148,7 @@ def create_document_from_upload(project_id: str, file: UploadFile, db: Session) 
                 "created_at": datetime.now(UTC),
             },
         )
-        db.commit()
+        mark_project_uploaded(project_id, db)
     except Exception:
         db.rollback()
         Path(storage_path).unlink(missing_ok=True)

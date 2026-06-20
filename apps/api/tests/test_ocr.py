@@ -22,18 +22,25 @@ class FakeSession:
     def __init__(self, project: SimpleNamespace | None, document: SimpleNamespace | None) -> None:
         self.project = project
         self.document = document
+        self.committed = False
 
     def execute(self, statement, params: dict[str, str]):
         sql = str(statement)
         if "FROM projects" in sql:
             if self.project and self.project.id == params["project_id"]:
-                return FakeResult({"id": self.project.id})
+                return FakeResult({"id": self.project.id, "status": self.project.status})
             return FakeResult(None)
         if "FROM documents" in sql:
             if self.document and self.document.id == params["document_id"]:
                 return FakeResult(vars(self.document))
             return FakeResult(None)
+        if "UPDATE projects SET status" in sql and self.project:
+            self.project.status = params["status"]
+            return FakeResult(None)
         return FakeResult(None)
+
+    def commit(self):
+        self.committed = True
 
 
 def override_db(project: SimpleNamespace | None, document: SimpleNamespace | None):
@@ -54,7 +61,7 @@ def teardown_function():
 
 
 def test_ocr_returns_mock_text_when_azure_key_is_missing():
-    project = SimpleNamespace(id="project-1", name="Demo")
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
     document = SimpleNamespace(
         id="document-1",
         project_id="project-1",
@@ -77,7 +84,7 @@ def test_ocr_returns_mock_text_when_azure_key_is_missing():
 
 
 def test_ocr_rejects_document_from_another_project():
-    project = SimpleNamespace(id="project-1", name="Demo")
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
     document = SimpleNamespace(
         id="document-1",
         project_id="project-2",
@@ -111,7 +118,7 @@ def test_ocr_rejects_missing_project_before_processing_document():
 
 def test_ocr_rate_limit_is_enforced(monkeypatch):
     monkeypatch.setattr("app.ocr.settings.ocr_rate_limit_per_minute", 1)
-    project = SimpleNamespace(id="project-1", name="Demo")
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
     document = SimpleNamespace(
         id="document-1",
         project_id="project-1",
