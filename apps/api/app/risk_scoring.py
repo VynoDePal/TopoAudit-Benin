@@ -23,7 +23,9 @@ def score_surface_deviation(declared_surface_m2: float, calculated_surface_m2: f
     deviation_m2 = abs(calculated_surface_m2 - declared_surface_m2)
     deviation_percent = deviation_m2 / declared_surface_m2 * 100
 
-    if deviation_m2 <= 2:
+    # Spec : faible si écart ≤ 1 % OU ≤ 2 m² (le « OU ≤ 1 % » manquait → une GRANDE
+    # parcelle avec un écart absolu > 2 m² mais négligeable en % était classée modérée).
+    if deviation_m2 <= 2 or deviation_percent <= 1:
         risk_level: RiskLevel = "low"
     elif deviation_percent <= 5:
         risk_level = "moderate"
