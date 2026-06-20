@@ -1,12 +1,8 @@
-from io import BytesIO
+from html import escape
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import cm
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from weasyprint import HTML
 
-from app.workflow import AuditResponse
+from app.workflow import AuditResponse, ParcelAuditResult
 
 LEGAL_DISCLAIMER = (
     "Ce rapport est généré automatiquement à des fins d'audit technique préliminaire. "
@@ -21,97 +17,92 @@ def _risk_label(risk_level: str) -> str:
     return labels.get(risk_level, risk_level)
 
 
+def _format_surface(value: float | None) -> str:
+    return "—" if value is None else f"{value:.2f} m²"
+
+
+def _warning_list(warnings: list[str]) -> str:
+    return "".join(f"<li>{escape(warning)}</li>" for warning in warnings)
+
+
+def _parcel_card(parcel: ParcelAuditResult, index: int) -> str:
+    warnings = parcel.warnings or ["Aucune alerte technique supplémentaire."]
+    parcel_id = f"<p class=\"muted\">Identifiant : {escape(parcel.parcel_id)}</p>" if parcel.parcel_id else ""
+    geometry_status = "Invalide" if parcel.invalid_geometry else "Validée"
+    return f"""
+        <section class="parcel-card">
+            <h3>Parcelle {index} — {escape(parcel.label)}</h3>
+            {parcel_id}
+            <table>
+                <tbody>
+                    <tr><th>Surface déclarée</th><td>{escape(_format_surface(parcel.declared_surface_m2))}</td></tr>
+                    <tr><th>Surface calculée</th><td>{escape(_format_surface(parcel.calculated_surface_m2))}</td></tr>
+                    <tr><th>Score d'extraction</th><td>{parcel.extraction_score}/100</td></tr>
+                    <tr><th>Score technique</th><td>{parcel.technical_score}/100</td></tr>
+                    <tr><th>Niveau de risque</th><td>{escape(_risk_label(parcel.risk_level))}</td></tr>
+                    <tr><th>Géométrie</th><td>{geometry_status}</td></tr>
+                </tbody>
+            </table>
+            <h4>Alertes de la parcelle</h4>
+            <ul>{_warning_list(warnings)}</ul>
+        </section>
+    """
+
+
 def generate_audit_report_pdf(audit: AuditResponse) -> bytes:
-    buffer = BytesIO()
-    document = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=2 * cm,
-        leftMargin=2 * cm,
-        topMargin=2 * cm,
-        bottomMargin=2 * cm,
-        title=f"Rapport d'audit {audit.project_id}",
-    )
-    styles = getSampleStyleSheet()
-    title_style = styles["Title"]
-    heading_style = styles["Heading2"]
-    body_style = styles["BodyText"]
-    disclaimer_style = ParagraphStyle(
-        "Disclaimer",
-        parent=body_style,
-        borderColor=colors.HexColor("#b45309"),
-        borderPadding=8,
-        backColor=colors.HexColor("#fffbeb"),
-        leading=14,
-    )
-
-    score_rows = [
-        ["Indicateur", "Valeur"],
-        ["Projet", audit.project_id],
-        ["Audit", audit.audit_id],
-        ["État du workflow", audit.state.value],
-        ["Score d'extraction", f"{audit.extraction_score}/100"],
-        ["Score technique", f"{audit.technical_score}/100"],
-        ["Niveau de risque", _risk_label(audit.risk_level)],
-    ]
-    score_table = Table(score_rows, colWidths=[6 * cm, 8 * cm])
-    score_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
-                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f9fafb")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("PADDING", (0, 0), (-1, -1), 7),
-            ]
-        )
-    )
-
     warnings = audit.warnings or ["Aucune alerte technique supplémentaire."]
-    warning_items = "<br/>".join(f"• {warning}" for warning in warnings)
+    parcels_html = "".join(_parcel_card(parcel, index) for index, parcel in enumerate(audit.parcels, start=1))
+    if not parcels_html:
+        parcels_html = "<p>Aucune parcelle détaillée n'est disponible pour cet audit.</p>"
 
-    story = [
-        Paragraph("Rapport d'audit préliminaire TopoAudit Bénin", title_style),
-        Spacer(1, 0.5 * cm),
-        Paragraph("Scores de risque", heading_style),
-        score_table,
-    ]
+    html = f"""
+    <!doctype html>
+    <html lang="fr">
+    <head>
+        <meta charset="utf-8">
+        <title>Rapport d'audit {escape(audit.project_id)}</title>
+        <style>
+            @page {{ size: A4; margin: 1.8cm; }}
+            body {{ color: #111827; font-family: DejaVu Sans, sans-serif; font-size: 11px; line-height: 1.45; }}
+            h1 {{ color: #111827; font-size: 22px; margin: 0 0 18px; }}
+            h2 {{ border-bottom: 2px solid #d1d5db; color: #1f2937; font-size: 16px; margin: 22px 0 10px; padding-bottom: 4px; }}
+            h3 {{ color: #1f2937; font-size: 14px; margin: 0 0 8px; }}
+            h4 {{ color: #374151; font-size: 12px; margin: 10px 0 4px; }}
+            table {{ border-collapse: collapse; margin: 8px 0 10px; width: 100%; }}
+            th, td {{ border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; vertical-align: top; }}
+            th {{ background: #f3f4f6; font-weight: 700; width: 42%; }}
+            ul {{ margin: 4px 0 0 18px; padding: 0; }}
+            .summary th {{ background: #1f2937; color: white; width: 45%; }}
+            .parcel-card {{ border: 1px solid #d1d5db; border-radius: 6px; margin: 12px 0; padding: 12px; page-break-inside: avoid; }}
+            .muted {{ color: #4b5563; margin: -4px 0 8px; }}
+            .disclaimer {{ background: #fffbeb; border: 1px solid #b45309; border-radius: 6px; padding: 10px; }}
+        </style>
+    </head>
+    <body>
+        <h1>Rapport d'audit préliminaire TopoAudit Bénin</h1>
 
-    if audit.parcels:
-        parcel_rows = [["Parcelle", "Surface déclarée", "Surface calculée", "Score", "Risque"]]
-        for parcel in audit.parcels:
-            declared = "—" if parcel.declared_surface_m2 is None else f"{parcel.declared_surface_m2:.2f} m²"
-            calculated = "—" if parcel.calculated_surface_m2 is None else f"{parcel.calculated_surface_m2:.2f} m²"
-            parcel_rows.append(
-                [parcel.label, declared, calculated, f"{parcel.technical_score}/100", _risk_label(parcel.risk_level)]
-            )
-        parcel_table = Table(parcel_rows, colWidths=[4 * cm, 3 * cm, 3 * cm, 2 * cm, 2.5 * cm])
-        parcel_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#374151")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("PADDING", (0, 0), (-1, -1), 6),
-                ]
-            )
-        )
-        story.extend([Spacer(1, 0.5 * cm), Paragraph("Audits par parcelle", heading_style), parcel_table])
+        <h2>Scores de risque</h2>
+        <table class="summary">
+            <tbody>
+                <tr><th>Projet</th><td>{escape(audit.project_id)}</td></tr>
+                <tr><th>Audit</th><td>{escape(audit.audit_id)}</td></tr>
+                <tr><th>État du workflow</th><td>{escape(audit.state.value)}</td></tr>
+                <tr><th>Score d'extraction</th><td>{audit.extraction_score}/100</td></tr>
+                <tr><th>Score technique</th><td>{audit.technical_score}/100</td></tr>
+                <tr><th>Niveau de risque</th><td>{escape(_risk_label(audit.risk_level))}</td></tr>
+            </tbody>
+        </table>
 
-    story.extend(
-        [
-            Spacer(1, 0.5 * cm),
-            Paragraph("Alertes et limites techniques", heading_style),
-            Paragraph(warning_items, body_style),
-            Spacer(1, 0.5 * cm),
-            Paragraph("Avertissement légal obligatoire", heading_style),
-            Paragraph(LEGAL_DISCLAIMER, disclaimer_style),
-        ]
-    )
+        <h2>Audits par parcelle</h2>
+        <p>Les surfaces et alertes ci-dessous sont présentées parcelle par parcelle, sans fusionner les géométries.</p>
+        {parcels_html}
 
-    document.build(story)
-    return buffer.getvalue()
+        <h2>Alertes et limites techniques</h2>
+        <ul>{_warning_list(warnings)}</ul>
+
+        <h2>Avertissement légal obligatoire</h2>
+        <p class="disclaimer">{escape(LEGAL_DISCLAIMER)}</p>
+    </body>
+    </html>
+    """
+    return HTML(string=html).write_pdf()
