@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, text
 
 from app.config import settings
 from app.crs import GEOJSON_CRS, SUPPORTED_SOURCE_CRS, transform_coordinates_to_wgs84
+from app.geometry_engine import PolygonValidationResult, validate_polygon
 
 app = FastAPI(
     title=settings.app_name,
@@ -42,6 +43,14 @@ class CoordinateTransformResponse(BaseModel):
     coordinates: list[list[float]]
 
 
+class PolygonValidationRequest(BaseModel):
+    source_crs: SUPPORTED_SOURCE_CRS = Field(default="EPSG:32631", examples=["EPSG:4326"])
+    coordinates: list[CoordinateXY] = Field(
+        min_length=3,
+        examples=[[[2.13, 6.4], [2.14, 6.4], [2.14, 6.41], [2.13, 6.41]]],
+    )
+
+
 def _database_ready() -> bool:
     try:
         engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -70,6 +79,11 @@ def transform_crs(payload: CoordinateTransformRequest) -> CoordinateTransformRes
         target_crs=GEOJSON_CRS,
         coordinates=transform_coordinates_to_wgs84(payload.coordinates, payload.source_crs),
     )
+
+
+@app.post("/api/geometry/validate-polygon", response_model=PolygonValidationResult, tags=["geometry"])
+def validate_polygon_geometry(payload: PolygonValidationRequest) -> PolygonValidationResult:
+    return validate_polygon(payload.coordinates, payload.source_crs)
 
 
 @app.get("/api", tags=["system"])
