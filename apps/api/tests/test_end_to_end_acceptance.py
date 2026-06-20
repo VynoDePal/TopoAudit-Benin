@@ -10,8 +10,9 @@ from app.ocr import MOCK_OCR_TEXT
 
 
 class FakeResult:
-    def __init__(self, row):
+    def __init__(self, row=None, rows=None):
         self.row = row
+        self.rows = rows or []
 
     def mappings(self):
         return self
@@ -19,11 +20,15 @@ class FakeResult:
     def first(self):
         return self.row
 
+    def all(self):
+        return self.rows
+
 
 class FakeEndToEndSession:
-    def __init__(self, *, status="UPLOADED", audit_inputs=None) -> None:
+    def __init__(self, *, status="UPLOADED", audit_inputs=None, parcel_rows=None) -> None:
         self.status = status
         self.audit_inputs = audit_inputs
+        self.parcel_rows = parcel_rows or []
         self.committed = False
         self.documents = {
             "doc-clear-wgs84": {
@@ -42,6 +47,8 @@ class FakeEndToEndSession:
 
     def execute(self, statement, params: dict[str, str]):
         sql = str(statement)
+        if "FROM parcels p" in sql:
+            return FakeResult(rows=self.parcel_rows)
         if "FROM audit_inputs" in sql:
             return FakeResult(self.audit_inputs)
         if "FROM documents" in sql:
@@ -264,22 +271,35 @@ def test_e2e_xy_inversion_is_normalized_before_audit():
 
 
 def test_e2e_multi_parcel_validates_each_parcel_and_reports_highest_risk():
-    session = FakeEndToEndSession(
-        status="VALIDATED",
-        audit_inputs={
-            "extraction_score": 83,
-            "declared_surface_m2": 250.0,
-            "calculated_surface_m2": 269.0,
-            "invalid_geometry": False,
-        },
-    )
-    app.dependency_overrides[get_db] = override_db(session)
-    client = TestClient(app)
-
     parcels = [
         [[2.13, 6.4], [2.131, 6.4], [2.131, 6.401], [2.13, 6.401]],
         [[2.132, 6.4], [2.134, 6.4], [2.134, 6.402], [2.132, 6.402]],
     ]
+    parcel_rows = [
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "declared_surface_m2": 549,
+            "detected_crs": "EPSG:4326",
+            "source_x": x,
+            "source_y": y,
+        }
+        for x, y in parcels[0]
+    ] + [
+        {
+            "parcel_id": "parcel-b",
+            "label": "Parcelle B",
+            "declared_surface_m2": 250,
+            "detected_crs": "EPSG:4326",
+            "source_x": x,
+            "source_y": y,
+        }
+        for x, y in parcels[1]
+    ]
+    session = FakeEndToEndSession(status="VALIDATED", parcel_rows=parcel_rows)
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
     geometry_payloads = [
         client.post("/api/geometry/validate-polygon", json={"source_crs": "EPSG:4326", "coordinates": parcel}).json()
         for parcel in parcels
@@ -290,5 +310,8 @@ def test_e2e_multi_parcel_validates_each_parcel_and_reports_highest_risk():
 
     audit_response = client.post("/api/projects/project-multi-parcel/audit")
     assert audit_response.status_code == 200
-    assert audit_response.json()["risk_level"] == "high"
-    assert audit_response.json()["technical_score"] == 48
+    payload = audit_response.json()
+    assert payload["risk_level"] == "moderate"
+    assert payload["technical_score"] == 60
+    assert [parcel["label"] for parcel in payload["parcels"]] == ["Parcelle A", "Parcelle B"]
+    assert all(parcel["calculated_surface_m2"] is None for parcel in payload["parcels"])
