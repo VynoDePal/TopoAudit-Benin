@@ -16,3 +16,6 @@
 
 - Frontend MapLibre integration lives in `apps/web/app/components/ParcelMap.tsx`; it must remain client-side (`"use client"` / dynamic import with `ssr: false`) because MapLibre depends on browser APIs.
 
+- OCR validation frontend helpers now live in `apps/web/app/components/ocrValidationShared.ts`; reuse this module for API base URL, CRS options, OCR sample data, fetch helper, and parcel feature creation instead of duplicating logic across pages/components.
+- `apps/web/app/components/OcrValidationInterface.tsx` centralizes form-dirty reset behavior via shared helpers (`invalidateConfirmation` / `updatePoints`) to avoid DRY gate failures when editing coordinates/CRS.
+
