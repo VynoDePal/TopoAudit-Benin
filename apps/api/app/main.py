@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -11,6 +11,7 @@ from app.crs import GEOJSON_CRS, SUPPORTED_SOURCE_CRS, transform_coordinates_to_
 from app.database import get_db, get_engine
 from app.geometry_engine import PolygonValidationResult, validate_polygon
 from app.ocr import OcrResult, enforce_ocr_rate_limit, extract_text_from_document
+from app.pdf_report import generate_audit_report_pdf
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
 from app.uploads import DocumentUploadResponse, create_document_from_upload
 from app.workflow import (
@@ -140,6 +141,19 @@ def validate_project(project_id: str, db: Session = Depends(get_db)) -> ProjectV
 @app.post("/api/projects/{project_id}/audit", response_model=AuditResponse, tags=["audits"])
 def run_project_audit(project_id: str, db: Session = Depends(get_db)) -> AuditResponse:
     return create_project_audit(project_id, db)
+
+
+@app.post(
+    "/api/projects/{project_id}/audit/report.pdf",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}},
+    tags=["reports"],
+)
+def download_project_audit_report(project_id: str, db: Session = Depends(get_db)) -> Response:
+    audit = create_project_audit(project_id, db)
+    pdf_bytes = generate_audit_report_pdf(audit)
+    headers = {"Content-Disposition": f'attachment; filename="topoaudit-{project_id}-report.pdf"'}
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
 def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> OcrResult:
