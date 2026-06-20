@@ -1,3 +1,5 @@
+import type { FeatureCollection, Polygon } from "geojson";
+
 export const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
 export const crsOptions = ["EPSG:32631", "EPSG:4326"] as const;
 
@@ -45,7 +47,7 @@ export const confidenceTone = (confidence: number) => {
 
 export const toNumber = (value: string) => Number(value.replace(",", "."));
 
-export const buildParcelFeature = (coordinates: number[][]): GeoJSON.FeatureCollection<GeoJSON.Polygon> => ({
+export const buildParcelFeature = (coordinates: number[][]): FeatureCollection<Polygon> => ({
   type: "FeatureCollection",
   features: [
     {
