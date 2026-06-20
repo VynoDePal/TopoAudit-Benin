@@ -25,6 +25,9 @@ class FakeUploadSession:
         self.project_exists = project_exists
         self.project_status: str | None = None
         self.inserted: dict[str, object] | None = None
+        self.levees: list[dict[str, object]] = []
+        self.parcels: list[dict[str, object]] = []
+        self.survey_points: list[dict[str, object]] = []
         self.committed = False
         self.rolled_back = False
 
@@ -34,6 +37,15 @@ class FakeUploadSession:
             return FakeResult({"id": params["project_id"], "status": self.project_status} if self.project_exists else None)
         if "INSERT INTO documents" in sql:
             self.inserted = dict(params)
+            return FakeResult(None)
+        if "INSERT INTO levees" in sql:
+            self.levees.append(dict(params))
+            return FakeResult(None)
+        if "INSERT INTO parcels" in sql:
+            self.parcels.append(dict(params))
+            return FakeResult(None)
+        if "INSERT INTO survey_points" in sql:
+            self.survey_points.append(dict(params))
             return FakeResult(None)
         if "UPDATE projects SET status" in sql:
             self.project_status = str(params["status"])
@@ -97,6 +109,54 @@ def test_upload_document_persists_file_and_database_metadata(tmp_path, monkeypat
         "storage_path": payload["storage_path"],
     }
     assert session.project_status == "UPLOADED"
+    assert session.committed is True
+    assert session.rolled_back is False
+
+
+def test_upload_extracts_multiple_coordinate_groups_into_distinct_parcels(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "local_storage_path", str(tmp_path))
+    monkeypatch.setattr(
+        "app.uploads.extract_text_from_document",
+        lambda storage_path, content_type: (
+            """
+            Plan multi-parcelles
+            Parcelle A
+            Surface déclarée: 05a 49ca
+            P1 403825.84 707630.38
+            P2 403836.57 707626.36
+            P3 403840.12 707641.10
+            P4 403829.20 707645.42
+
+            Parcelle B
+            Surface déclarée: 02a 10ca
+            P1 403850.00 707650.00
+            P2 403860.00 707650.00
+            P3 403860.00 707660.00
+            P4 403850.00 707660.00
+            """.strip(),
+            "mock",
+        ),
+    )
+    session = FakeUploadSession()
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+    content = b"%PDF-1.4 multi parcel plan"
+
+    response = client.post(
+        "/api/projects/project-1/documents",
+        files={"file": ("plan.pdf", content, "application/pdf")},
+    )
+
+    assert response.status_code == 201
+    assert len(session.levees) == 1
+    assert session.levees[0]["project_id"] == "project-1"
+    assert session.levees[0]["source_document_id"] == response.json()["id"]
+    assert [parcel["label"] for parcel in session.parcels] == ["Parcelle A", "Parcelle B"]
+    assert [parcel["declared_surface_m2"] for parcel in session.parcels] == [549, 210]
+    assert {parcel["levee_id"] for parcel in session.parcels} == {session.levees[0]["id"]}
+    assert len(session.survey_points) == 8
+    assert {point["parcel_id"] for point in session.survey_points[:4]} == {session.parcels[0]["id"]}
+    assert {point["parcel_id"] for point in session.survey_points[4:]} == {session.parcels[1]["id"]}
     assert session.committed is True
     assert session.rolled_back is False
 
