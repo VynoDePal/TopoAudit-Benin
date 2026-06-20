@@ -19,3 +19,5 @@
 - OCR validation frontend helpers now live in `apps/web/app/components/ocrValidationShared.ts`; reuse this module for API base URL, CRS options, OCR sample data, fetch helper, and parcel feature creation instead of duplicating logic across pages/components.
 - `apps/web/app/components/OcrValidationInterface.tsx` centralizes form-dirty reset behavior via shared helpers (`invalidateConfirmation` / `updatePoints`) to avoid DRY gate failures when editing coordinates/CRS.
 
+- PDF report generation lives in `apps/api/app/pdf_report.py` and is exposed via `POST /api/projects/{project_id}/audit/report.pdf`; it reuses `create_project_audit`, returns `application/pdf`, includes `LEGAL_DISCLAIMER`, and is currently implemented with ReportLab plus `pypdf`-based endpoint/content tests.
+
