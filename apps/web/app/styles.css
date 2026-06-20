@@ -70,3 +70,65 @@ h1 {
 .card span {
   color: #66756c;
 }
+
+
+.map-panel {
+  width: min(1120px, 100%);
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(320px, 1.2fr);
+  gap: 1.5rem;
+  align-items: stretch;
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid #dbe8df;
+  border-radius: 28px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgb(19 32 24 / 10%);
+}
+
+.map-copy {
+  padding: 1.25rem;
+}
+
+.map-copy h2 {
+  margin: 0;
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  line-height: 1;
+}
+
+.map-copy p:not(.eyebrow) {
+  color: #48564e;
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.map-container {
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid #c8d8ce;
+  border-radius: 22px;
+  background: #dbe8df;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 0.75rem;
+}
+
+@media (max-width: 820px) {
+  .shell {
+    place-items: stretch;
+  }
+
+  .hero {
+    padding: 2rem;
+  }
+
+  .map-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .map-container {
+    min-height: 420px;
+  }
+}
+

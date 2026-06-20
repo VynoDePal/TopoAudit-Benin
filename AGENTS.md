@@ -7,3 +7,5 @@
 - Issue #3 adds `apps/api/app/models.py` with SQLAlchemy 2 models (`Project`, `Document`, `Parcel`, `SurveyPoint`) and GeoAlchemy2 PostGIS geometry columns. `SurveyPoint.geom` accepts GeoJSON Point dicts via assignment coercion to `WKTElement` SRID 4326.
 - CRS conversion lives in `apps/api/app/crs.py`; it uses `pyproj.Transformer.from_crs(..., always_xy=True)` and returns GeoJSON-ready EPSG:4326 coordinates in `[longitude, latitude]` order. The API exposes it via `POST /api/crs/transform`.
 
+- Frontend MapLibre integration lives in `apps/web/app/components/ParcelMap.tsx`; it must remain client-side (`"use client"` / dynamic import with `ssr: false`) because MapLibre depends on browser APIs.
+
