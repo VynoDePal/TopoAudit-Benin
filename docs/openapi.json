@@ -1,0 +1,1306 @@
+{
+  "components": {
+    "schemas": {
+      "AuditResponse": {
+        "properties": {
+          "audit_id": {
+            "title": "Audit Id",
+            "type": "string"
+          },
+          "extraction_score": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Extraction Score",
+            "type": "integer"
+          },
+          "parcels": {
+            "items": {
+              "$ref": "#/components/schemas/ParcelAuditResult"
+            },
+            "title": "Parcels",
+            "type": "array"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "risk_level": {
+            "title": "Risk Level",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProjectWorkflowState",
+            "description": "Current audit workflow state"
+          },
+          "technical_score": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Technical Score",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id",
+          "state",
+          "audit_id",
+          "extraction_score",
+          "technical_score",
+          "risk_level",
+          "warnings"
+        ],
+        "title": "AuditResponse",
+        "type": "object"
+      },
+      "Body_upload_project_document_api_projects__project_id__documents_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_project_document_api_projects__project_id__documents_post",
+        "type": "object"
+      },
+      "CoordinateTransformRequest": {
+        "properties": {
+          "coordinates": {
+            "examples": [
+              [
+                [
+                  403825.84,
+                  707630.38
+                ],
+                [
+                  403836.57,
+                  707626.36
+                ]
+              ]
+            ],
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "minItems": 1,
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "source_crs": {
+            "default": "EPSG:32631",
+            "enum": [
+              "EPSG:32631",
+              "EPSG:4326"
+            ],
+            "examples": [
+              "EPSG:32631"
+            ],
+            "title": "Source Crs",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinates"
+        ],
+        "title": "CoordinateTransformRequest",
+        "type": "object"
+      },
+      "CoordinateTransformResponse": {
+        "properties": {
+          "coordinates": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "source_crs": {
+            "title": "Source Crs",
+            "type": "string"
+          },
+          "target_crs": {
+            "title": "Target Crs",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_crs",
+          "target_crs",
+          "coordinates"
+        ],
+        "title": "CoordinateTransformResponse",
+        "type": "object"
+      },
+      "DocumentUploadResponse": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "storage_path": {
+            "title": "Storage Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "filename",
+          "content_type",
+          "size_bytes",
+          "sha256",
+          "storage_path"
+        ],
+        "title": "DocumentUploadResponse",
+        "type": "object"
+      },
+      "GeometryValidationIssue": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "GeometryValidationIssue",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "OcrRequest": {
+        "properties": {
+          "document_id": {
+            "minLength": 1,
+            "title": "Document Id",
+            "type": "string"
+          },
+          "project_id": {
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "document_id"
+        ],
+        "title": "OcrRequest",
+        "type": "object"
+      },
+      "OcrResult": {
+        "properties": {
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "provider": {
+            "examples": [
+              "mock"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "text",
+          "document_id",
+          "project_id"
+        ],
+        "title": "OcrResult",
+        "type": "object"
+      },
+      "ParcelAuditResult": {
+        "properties": {
+          "calculated_surface_m2": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calculated Surface M2"
+          },
+          "declared_surface_m2": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Surface M2"
+          },
+          "extraction_score": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Extraction Score",
+            "type": "integer"
+          },
+          "invalid_geometry": {
+            "default": false,
+            "title": "Invalid Geometry",
+            "type": "boolean"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "parcel_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parcel Id"
+          },
+          "risk_level": {
+            "title": "Risk Level",
+            "type": "string"
+          },
+          "technical_score": {
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Technical Score",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "extraction_score",
+          "technical_score",
+          "risk_level",
+          "warnings"
+        ],
+        "title": "ParcelAuditResult",
+        "type": "object"
+      },
+      "PolygonValidationRequest": {
+        "properties": {
+          "coordinates": {
+            "examples": [
+              [
+                [
+                  2.13,
+                  6.4
+                ],
+                [
+                  2.14,
+                  6.4
+                ],
+                [
+                  2.14,
+                  6.41
+                ],
+                [
+                  2.13,
+                  6.41
+                ]
+              ]
+            ],
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "minItems": 3,
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "source_crs": {
+            "default": "EPSG:32631",
+            "enum": [
+              "EPSG:32631",
+              "EPSG:4326"
+            ],
+            "examples": [
+              "EPSG:4326"
+            ],
+            "title": "Source Crs",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinates"
+        ],
+        "title": "PolygonValidationRequest",
+        "type": "object"
+      },
+      "PolygonValidationResult": {
+        "properties": {
+          "area_m2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area M2"
+          },
+          "coordinates": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coordinates"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/GeometryValidationIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "orientation": {
+            "default": "unknown",
+            "enum": [
+              "xy",
+              "yx",
+              "unknown"
+            ],
+            "title": "Orientation",
+            "type": "string"
+          },
+          "self_intersecting": {
+            "default": false,
+            "title": "Self Intersecting",
+            "type": "boolean"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid"
+        ],
+        "title": "PolygonValidationResult",
+        "type": "object"
+      },
+      "ProjectCreateRequest": {
+        "properties": {
+          "name": {
+            "examples": [
+              "Audit parcelle Cotonou"
+            ],
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProjectCreateRequest",
+        "type": "object"
+      },
+      "ProjectCreateResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "status"
+        ],
+        "title": "ProjectCreateResponse",
+        "type": "object"
+      },
+      "ProjectValidationRequest": {
+        "properties": {
+          "coordinates": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "type": "array"
+                },
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              [
+                [
+                  403825.84,
+                  707630.38
+                ],
+                [
+                  403836.57,
+                  707626.36
+                ],
+                [
+                  403840.12,
+                  707641.1
+                ],
+                [
+                  403829.2,
+                  707645.42
+                ]
+              ]
+            ],
+            "title": "Coordinates"
+          },
+          "declared_surface_m2": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              549
+            ],
+            "title": "Declared Surface M2"
+          },
+          "source_crs": {
+            "default": "EPSG:32631",
+            "enum": [
+              "EPSG:32631",
+              "EPSG:4326"
+            ],
+            "examples": [
+              "EPSG:32631"
+            ],
+            "title": "Source Crs",
+            "type": "string"
+          }
+        },
+        "title": "ProjectValidationRequest",
+        "type": "object"
+      },
+      "ProjectValidationResponse": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProjectWorkflowState",
+            "description": "Current audit workflow state"
+          },
+          "validated_at": {
+            "format": "date-time",
+            "title": "Validated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "state",
+          "validated_at"
+        ],
+        "title": "ProjectValidationResponse",
+        "type": "object"
+      },
+      "ProjectWorkflowResponse": {
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProjectWorkflowState",
+            "description": "Current audit workflow state"
+          }
+        },
+        "required": [
+          "project_id",
+          "state"
+        ],
+        "title": "ProjectWorkflowResponse",
+        "type": "object"
+      },
+      "ProjectWorkflowState": {
+        "enum": [
+          "UPLOADED",
+          "OCR_EXTRACTED",
+          "VALIDATED",
+          "AUDITED"
+        ],
+        "title": "ProjectWorkflowState",
+        "type": "string"
+      },
+      "SurfaceRiskRequest": {
+        "properties": {
+          "calculated_surface_m2": {
+            "examples": [
+              551
+            ],
+            "minimum": 0.0,
+            "title": "Calculated Surface M2",
+            "type": "number"
+          },
+          "declared_surface_m2": {
+            "examples": [
+              549
+            ],
+            "exclusiveMinimum": 0.0,
+            "title": "Declared Surface M2",
+            "type": "number"
+          }
+        },
+        "required": [
+          "declared_surface_m2",
+          "calculated_surface_m2"
+        ],
+        "title": "SurfaceRiskRequest",
+        "type": "object"
+      },
+      "SurfaceRiskScore": {
+        "properties": {
+          "calculated_surface_m2": {
+            "title": "Calculated Surface M2",
+            "type": "number"
+          },
+          "declared_surface_m2": {
+            "title": "Declared Surface M2",
+            "type": "number"
+          },
+          "risk_level": {
+            "enum": [
+              "low",
+              "moderate",
+              "high"
+            ],
+            "title": "Risk Level",
+            "type": "string"
+          },
+          "surface_deviation_m2": {
+            "title": "Surface Deviation M2",
+            "type": "number"
+          },
+          "surface_deviation_percent": {
+            "title": "Surface Deviation Percent",
+            "type": "number"
+          }
+        },
+        "required": [
+          "risk_level",
+          "declared_surface_m2",
+          "calculated_surface_m2",
+          "surface_deviation_m2",
+          "surface_deviation_percent"
+        ],
+        "title": "SurfaceRiskScore",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "API prototype pour audit préliminaire de plans topographiques au Bénin.",
+    "title": "TopoAudit Benin",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api": {
+      "get": {
+        "operationId": "api_root_api_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Api Root Api Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Root",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/crs/transform": {
+      "post": {
+        "operationId": "transform_crs_api_crs_transform_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoordinateTransformRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoordinateTransformResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transform Crs",
+        "tags": [
+          "crs"
+        ]
+      }
+    },
+    "/api/geometry/validate-polygon": {
+      "post": {
+        "operationId": "validate_polygon_geometry_api_geometry_validate_polygon_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolygonValidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolygonValidationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Polygon Geometry",
+        "tags": [
+          "geometry"
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  "title": "Response Health Api Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/ocr": {
+      "post": {
+        "operationId": "run_document_ocr_from_body_api_ocr_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OcrRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcrResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Document Ocr From Body",
+        "tags": [
+          "ocr"
+        ]
+      }
+    },
+    "/api/projects": {
+      "post": {
+        "operationId": "create_project_api_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/audit": {
+      "post": {
+        "operationId": "run_project_audit_api_projects__project_id__audit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Project Audit",
+        "tags": [
+          "audits"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/audit/report.pdf": {
+      "post": {
+        "operationId": "download_project_audit_report_api_projects__project_id__audit_report_pdf_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/pdf": {}
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Project Audit Report",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/documents": {
+      "post": {
+        "operationId": "upload_project_document_api_projects__project_id__documents_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_project_document_api_projects__project_id__documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentUploadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Project Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/documents/{document_id}/ocr": {
+      "post": {
+        "operationId": "run_document_ocr_api_projects__project_id__documents__document_id__ocr_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OcrResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Document Ocr",
+        "tags": [
+          "ocr"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/validate": {
+      "post": {
+        "operationId": "validate_project_api_projects__project_id__validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ProjectValidationRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectValidationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Project",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/workflow": {
+      "get": {
+        "operationId": "get_project_workflow_api_projects__project_id__workflow_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectWorkflowResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Workflow",
+        "tags": [
+          "workflow"
+        ]
+      }
+    },
+    "/api/risk/score-surface": {
+      "post": {
+        "operationId": "score_surface_risk_api_risk_score_surface_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SurfaceRiskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurfaceRiskScore"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Score Surface Risk",
+        "tags": [
+          "risk"
+        ]
+      }
+    }
+  }
+}
