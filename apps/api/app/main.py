@@ -1,8 +1,12 @@
+from typing import Annotated
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
 
 from app.config import settings
+from app.crs import GEOJSON_CRS, SUPPORTED_SOURCE_CRS, transform_coordinates_to_wgs84
 
 app = FastAPI(
     title=settings.app_name,
@@ -20,6 +24,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+CoordinateXY = Annotated[list[float], Field(min_length=2, max_length=2)]
+
+
+class CoordinateTransformRequest(BaseModel):
+    source_crs: SUPPORTED_SOURCE_CRS = Field(default="EPSG:32631", examples=["EPSG:32631"])
+    coordinates: list[CoordinateXY] = Field(
+        min_length=1,
+        examples=[[[403825.84, 707630.38], [403836.57, 707626.36]]],
+    )
+
+
+class CoordinateTransformResponse(BaseModel):
+    source_crs: str
+    target_crs: str
+    coordinates: list[list[float]]
 
 
 def _database_ready() -> bool:
@@ -41,6 +61,15 @@ def health() -> dict[str, str | bool]:
         "environment": settings.app_env,
         "database": _database_ready(),
     }
+
+
+@app.post("/api/crs/transform", response_model=CoordinateTransformResponse, tags=["crs"])
+def transform_crs(payload: CoordinateTransformRequest) -> CoordinateTransformResponse:
+    return CoordinateTransformResponse(
+        source_crs=payload.source_crs,
+        target_crs=GEOJSON_CRS,
+        coordinates=transform_coordinates_to_wgs84(payload.coordinates, payload.source_crs),
+    )
 
 
 @app.get("/api", tags=["system"])
