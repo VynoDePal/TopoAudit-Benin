@@ -6,18 +6,22 @@ from pypdf import PdfReader
 from app.database import get_db
 from app.main import app
 from app.pdf_report import LEGAL_DISCLAIMER, generate_audit_report_pdf
-from app.workflow import AuditResponse, ProjectWorkflowState
+from app.workflow import AuditResponse, ParcelAuditResult, ProjectWorkflowState
 
 
 class FakeResult:
-    def __init__(self, row):
+    def __init__(self, row=None, rows=None):
         self.row = row
+        self.rows = rows or []
 
     def mappings(self):
         return self
 
     def first(self):
         return self.row
+
+    def all(self):
+        return self.rows
 
 
 class FakeReportSession:
@@ -27,6 +31,8 @@ class FakeReportSession:
 
     def execute(self, statement, params: dict[str, str]):
         sql = str(statement)
+        if "FROM parcels p" in sql:
+            return FakeResult(rows=[])
         if "FROM audit_inputs" in sql:
             return FakeResult(
                 {

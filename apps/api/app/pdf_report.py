@@ -77,13 +77,41 @@ def generate_audit_report_pdf(audit: AuditResponse) -> bytes:
         Spacer(1, 0.5 * cm),
         Paragraph("Scores de risque", heading_style),
         score_table,
-        Spacer(1, 0.5 * cm),
-        Paragraph("Alertes et limites techniques", heading_style),
-        Paragraph(warning_items, body_style),
-        Spacer(1, 0.5 * cm),
-        Paragraph("Avertissement légal obligatoire", heading_style),
-        Paragraph(LEGAL_DISCLAIMER, disclaimer_style),
     ]
+
+    if audit.parcels:
+        parcel_rows = [["Parcelle", "Surface déclarée", "Surface calculée", "Score", "Risque"]]
+        for parcel in audit.parcels:
+            declared = "—" if parcel.declared_surface_m2 is None else f"{parcel.declared_surface_m2:.2f} m²"
+            calculated = "—" if parcel.calculated_surface_m2 is None else f"{parcel.calculated_surface_m2:.2f} m²"
+            parcel_rows.append(
+                [parcel.label, declared, calculated, f"{parcel.technical_score}/100", _risk_label(parcel.risk_level)]
+            )
+        parcel_table = Table(parcel_rows, colWidths=[4 * cm, 3 * cm, 3 * cm, 2 * cm, 2.5 * cm])
+        parcel_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#374151")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("PADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        story.extend([Spacer(1, 0.5 * cm), Paragraph("Audits par parcelle", heading_style), parcel_table])
+
+    story.extend(
+        [
+            Spacer(1, 0.5 * cm),
+            Paragraph("Alertes et limites techniques", heading_style),
+            Paragraph(warning_items, body_style),
+            Spacer(1, 0.5 * cm),
+            Paragraph("Avertissement légal obligatoire", heading_style),
+            Paragraph(LEGAL_DISCLAIMER, disclaimer_style),
+        ]
+    )
 
     document.build(story)
     return buffer.getvalue()

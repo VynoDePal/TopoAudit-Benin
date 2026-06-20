@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.geometry_engine import validate_polygon
 from app.risk_scoring import score_surface_deviation
 
 
@@ -26,12 +27,25 @@ class ProjectValidationResponse(ProjectWorkflowResponse):
     validated_at: datetime
 
 
+class ParcelAuditResult(BaseModel):
+    parcel_id: str | None = None
+    label: str
+    extraction_score: int = Field(ge=0, le=100)
+    declared_surface_m2: float | None = Field(default=None, gt=0)
+    calculated_surface_m2: float | None = Field(default=None, ge=0)
+    invalid_geometry: bool = False
+    technical_score: int = Field(ge=0, le=100)
+    risk_level: str
+    warnings: list[str]
+
+
 class AuditResponse(ProjectWorkflowResponse):
     audit_id: str
     extraction_score: int = Field(ge=0, le=100)
     technical_score: int = Field(ge=0, le=100)
     risk_level: str
     warnings: list[str]
+    parcels: list[ParcelAuditResult] = Field(default_factory=list)
 
 
 class _AuditInputs(BaseModel):
@@ -39,6 +53,8 @@ class _AuditInputs(BaseModel):
     declared_surface_m2: float | None = Field(default=None, gt=0)
     calculated_surface_m2: float | None = Field(default=None, ge=0)
     invalid_geometry: bool = False
+    parcel_id: str | None = None
+    label: str = "Parcelle validée"
 
 
 _ALLOWED_PREVIOUS_STATES: dict[ProjectWorkflowState, set[ProjectWorkflowState | None]] = {
@@ -117,7 +133,7 @@ def validate_project_for_audit(project_id: str, db: Session) -> ProjectValidatio
     return ProjectValidationResponse(project_id=project_id, state=state, validated_at=datetime.now(UTC))
 
 
-def _load_audit_inputs(project_id: str, db: Session) -> _AuditInputs:
+def _ensure_project_exists(project_id: str, db: Session) -> None:
     row = (
         db.execute(text("SELECT id FROM projects WHERE id = :project_id"), {"project_id": project_id})
         .mappings()
@@ -126,6 +142,8 @@ def _load_audit_inputs(project_id: str, db: Session) -> _AuditInputs:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
 
+
+def _load_project_audit_input(project_id: str, db: Session) -> _AuditInputs | None:
     audit_data = (
         db.execute(
             text(
@@ -141,22 +159,105 @@ def _load_audit_inputs(project_id: str, db: Session) -> _AuditInputs:
         .first()
     )
     if audit_data is None:
-        return _AuditInputs(extraction_score=87)
+        return None
 
     payload = dict(audit_data)
     payload.setdefault("extraction_score", 87)
     payload.setdefault("invalid_geometry", False)
+    payload["label"] = "Parcelle validée"
     try:
         return _AuditInputs.model_validate(payload)
     except Exception:
         return _AuditInputs(extraction_score=87)
 
 
+def _coerce_source_coordinate(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs]:
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT
+                    p.id AS parcel_id,
+                    p.label AS label,
+                    p.declared_surface_m2 AS declared_surface_m2,
+                    p.detected_crs AS detected_crs,
+                    sp.source_x AS source_x,
+                    sp.source_y AS source_y
+                FROM parcels p
+                LEFT JOIN survey_points sp ON sp.parcel_id = p.id
+                WHERE p.project_id = :project_id
+                ORDER BY p.created_at, p.id, sp.created_at, sp.label
+                """
+            ),
+            {"project_id": project_id},
+        )
+        .mappings()
+        .all()
+    )
+    parcels: dict[str, dict[str, object]] = {}
+    for row in rows:
+        parcel_id = str(row["parcel_id"])
+        parcel = parcels.setdefault(
+            parcel_id,
+            {
+                "parcel_id": parcel_id,
+                "label": row.get("label") or "Parcelle sans libellé",
+                "declared_surface_m2": row.get("declared_surface_m2"),
+                "detected_crs": row.get("detected_crs") or "EPSG:32631",
+                "coordinates": [],
+            },
+        )
+        source_x = _coerce_source_coordinate(row.get("source_x"))
+        source_y = _coerce_source_coordinate(row.get("source_y"))
+        if source_x is not None and source_y is not None:
+            parcel["coordinates"].append([source_x, source_y])
+
+    inputs: list[_AuditInputs] = []
+    for parcel in parcels.values():
+        coordinates = parcel["coordinates"]
+        calculated_surface_m2: float | None = None
+        invalid_geometry = True
+        if isinstance(coordinates, list) and len(coordinates) >= 3:
+            geometry = validate_polygon(coordinates, str(parcel["detected_crs"] or "EPSG:32631"))
+            calculated_surface_m2 = geometry.area_m2
+            invalid_geometry = not geometry.valid
+        inputs.append(
+            _AuditInputs(
+                parcel_id=str(parcel["parcel_id"]),
+                label=str(parcel["label"]),
+                extraction_score=87,
+                declared_surface_m2=parcel["declared_surface_m2"],
+                calculated_surface_m2=calculated_surface_m2,
+                invalid_geometry=invalid_geometry,
+            )
+        )
+    return inputs
+
+
+def _load_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs]:
+    _ensure_project_exists(project_id, db)
+    parcel_inputs = _load_parcel_audit_inputs(project_id, db)
+    if parcel_inputs:
+        return parcel_inputs
+
+    project_input = _load_project_audit_input(project_id, db)
+    return [project_input or _AuditInputs(extraction_score=87)]
+
+
 def _compute_audit_result(inputs: _AuditInputs) -> tuple[int, str, list[str]]:
     warnings = ["Aucune comparaison cadastrale officielle effectuée."]
 
     if inputs.invalid_geometry:
-        warnings.append("Incohérence géométrique détectée sur la parcelle validée.")
+        warnings.append(f"Incohérence géométrique détectée sur {inputs.label}.")
         technical_score = 35
         risk_level = "high"
     elif inputs.declared_surface_m2 is not None and inputs.calculated_surface_m2 is not None:
@@ -166,14 +267,14 @@ def _compute_audit_result(inputs: _AuditInputs) -> tuple[int, str, list[str]]:
             technical_score = 92
         elif risk_level == "moderate":
             technical_score = 74
-            warnings.append("Écart modéré entre surface déclarée et surface calculée.")
+            warnings.append(f"Écart modéré entre surface déclarée et surface calculée pour {inputs.label}.")
         else:
             technical_score = 48
-            warnings.append("Écart élevé entre surface déclarée et surface calculée.")
+            warnings.append(f"Écart élevé entre surface déclarée et surface calculée pour {inputs.label}.")
     else:
         technical_score = 60
         risk_level = "moderate"
-        warnings.append("Données de surface insuffisantes pour un scoring technique complet.")
+        warnings.append(f"Données de surface insuffisantes pour un scoring technique complet de {inputs.label}.")
 
     return technical_score, risk_level, warnings
 
@@ -231,16 +332,43 @@ def upsert_audit_inputs(
     db.commit()
 
 
+_RISK_ORDER = {"low": 0, "moderate": 1, "high": 2}
+
+
+def _aggregate_risk_level(parcel_results: list[ParcelAuditResult]) -> str:
+    return max(parcel_results, key=lambda result: _RISK_ORDER.get(result.risk_level, -1)).risk_level
+
+
 def create_project_audit(project_id: str, db: Session) -> AuditResponse:
-    inputs = _load_audit_inputs(project_id, db)
-    technical_score, risk_level, warnings = _compute_audit_result(inputs)
+    inputs_by_parcel = _load_audit_inputs(project_id, db)
+    parcel_results: list[ParcelAuditResult] = []
+    for inputs in inputs_by_parcel:
+        technical_score, risk_level, warnings = _compute_audit_result(inputs)
+        parcel_results.append(
+            ParcelAuditResult(
+                parcel_id=inputs.parcel_id,
+                label=inputs.label,
+                extraction_score=inputs.extraction_score,
+                declared_surface_m2=inputs.declared_surface_m2,
+                calculated_surface_m2=inputs.calculated_surface_m2,
+                invalid_geometry=inputs.invalid_geometry,
+                technical_score=technical_score,
+                risk_level=risk_level,
+                warnings=warnings,
+            )
+        )
+
+    project_warnings = ["Aucune comparaison cadastrale officielle effectuée."]
+    for parcel in parcel_results:
+        project_warnings.extend(warning for warning in parcel.warnings[1:] if warning not in project_warnings)
     state = transition_project_state(project_id, ProjectWorkflowState.AUDITED, db)
     return AuditResponse(
         project_id=project_id,
         state=state,
         audit_id=str(uuid4()),
-        extraction_score=inputs.extraction_score,
-        technical_score=technical_score,
-        risk_level=risk_level,
-        warnings=warnings,
+        extraction_score=min(parcel.extraction_score for parcel in parcel_results),
+        technical_score=min(parcel.technical_score for parcel in parcel_results),
+        risk_level=_aggregate_risk_level(parcel_results),
+        warnings=project_warnings,
+        parcels=parcel_results,
     )
