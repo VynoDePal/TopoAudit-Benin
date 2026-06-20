@@ -23,5 +23,8 @@
 - OCR validation frontend helpers now live in `apps/web/app/components/ocrValidationShared.ts`; reuse this module for API base URL, CRS options, OCR sample data, fetch helper, and parcel feature creation instead of duplicating logic across pages/components.
 - `apps/web/app/components/OcrValidationInterface.tsx` centralizes form-dirty reset behavior via shared helpers (`invalidateConfirmation` / `updatePoints`) to avoid DRY gate failures when editing coordinates/CRS.
 
+
+- OpenAPI artifact generation for issue #40 lives in `apps/api/scripts/generate_openapi.py`; run it with `PYTHONPATH=apps/api python apps/api/scripts/generate_openapi.py`. `docs/openapi.json` is committed and `apps/api/tests/test_openapi_spec.py` verifies it matches `app.openapi()` plus the multi-parcel audit contract.
+
 - PDF report generation lives in `apps/api/app/pdf_report.py` and is exposed via `POST /api/projects/{project_id}/audit/report.pdf`; it reuses `create_project_audit`, returns `application/pdf`, includes `LEGAL_DISCLAIMER`, and is implemented with WeasyPrint HTML rendering plus `pypdf`-based endpoint/content tests. The report must present audit/surface details per parcel without merging parcel geometries.
 
