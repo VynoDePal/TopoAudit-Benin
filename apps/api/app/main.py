@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -12,6 +12,7 @@ from app.database import get_db, get_engine
 from app.geometry_engine import PolygonValidationResult, validate_polygon
 from app.ocr import OcrResult, enforce_ocr_rate_limit, extract_text_from_document
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
+from app.uploads import DocumentUploadResponse, create_document_from_upload
 
 app = FastAPI(
     title=settings.app_name,
@@ -96,6 +97,20 @@ def transform_crs(payload: CoordinateTransformRequest) -> CoordinateTransformRes
 @app.post("/api/geometry/validate-polygon", response_model=PolygonValidationResult, tags=["geometry"])
 def validate_polygon_geometry(payload: PolygonValidationRequest) -> PolygonValidationResult:
     return validate_polygon(payload.coordinates, payload.source_crs)
+
+
+@app.post(
+    "/api/projects/{project_id}/documents",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["documents"],
+)
+def upload_project_document(
+    project_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> DocumentUploadResponse:
+    return create_document_from_upload(project_id, file, db)
 
 
 def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> OcrResult:
