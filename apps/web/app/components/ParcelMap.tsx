@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
+import type { FeatureCollection, Polygon } from "geojson";
 import maplibregl, { type GeoJSONSource, type Map, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -30,7 +31,7 @@ const osmEsriStyle: StyleSpecification = {
   ]
 };
 
-const sampleParcels: GeoJSON.FeatureCollection<GeoJSON.Polygon> = {
+const sampleParcels: FeatureCollection<Polygon> = {
   type: "FeatureCollection",
   features: [
     {
@@ -69,12 +70,12 @@ const sampleParcels: GeoJSON.FeatureCollection<GeoJSON.Polygon> = {
 };
 
 type ParcelMapProps = {
-  parcels?: GeoJSON.FeatureCollection<GeoJSON.Polygon>;
+  parcels?: FeatureCollection<Polygon>;
   title?: string;
   description?: string;
 };
 
-function fitParcelBounds(map: Map, parcels: GeoJSON.FeatureCollection<GeoJSON.Polygon>) {
+function fitParcelBounds(map: Map, parcels: FeatureCollection<Polygon>) {
   const bounds = new maplibregl.LngLatBounds();
   parcels.features.forEach((feature) => {
     feature.geometry.coordinates[0].forEach((coordinate) => bounds.extend(coordinate as [number, number]));
