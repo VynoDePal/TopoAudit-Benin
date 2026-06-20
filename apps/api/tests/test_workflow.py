@@ -244,3 +244,54 @@ def test_audit_scores_each_extracted_parcel_independently_and_aggregates_worst_r
     assert payload["parcels"][1]["declared_surface_m2"] == 20
     assert "Parcelle B" in payload["warnings"][1]
 
+
+def test_audit_marks_parcel_without_enough_points_as_invalid_geometry():
+    parcel_rows = [
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "declared_surface_m2": 176,
+            "detected_crs": "EPSG:32631",
+            "source_x": 403825.84,
+            "source_y": 707630.38,
+        },
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "declared_surface_m2": 176,
+            "detected_crs": "EPSG:32631",
+            "source_x": 403836.57,
+            "source_y": 707626.36,
+        },
+    ]
+    session = FakeWorkflowSession(status="VALIDATED", parcel_rows=parcel_rows)
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/audit")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["risk_level"] == "high"
+    assert payload["technical_score"] == 35
+    assert payload["parcels"] == [
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "extraction_score": 87,
+            "declared_surface_m2": 176.0,
+            "calculated_surface_m2": None,
+            "invalid_geometry": True,
+            "technical_score": 35,
+            "risk_level": "high",
+            "warnings": [
+                "Aucune comparaison cadastrale officielle effectuée.",
+                "Incohérence géométrique détectée sur Parcelle A.",
+            ],
+        }
+    ]
+    assert payload["warnings"] == [
+        "Aucune comparaison cadastrale officielle effectuée.",
+        "Incohérence géométrique détectée sur Parcelle A.",
+    ]
+
