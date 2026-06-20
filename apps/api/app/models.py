@@ -6,6 +6,8 @@ from geoalchemy2 import Geometry, WKTElement
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, event, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from app.workflow import ProjectWorkflowState
+
 
 class Base(DeclarativeBase):
     pass
@@ -39,6 +41,7 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str | None] = mapped_column(String(32), default=ProjectWorkflowState.UPLOADED.value)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     documents: Mapped[list["Document"]] = relationship(back_populates="project", cascade="all, delete-orphan")
