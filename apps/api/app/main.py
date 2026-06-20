@@ -173,7 +173,10 @@ def get_project_workflow(project_id: str, db: Session = Depends(get_db)) -> Proj
 class ProjectValidationRequest(BaseModel):
     source_crs: SUPPORTED_SOURCE_CRS = Field(default="EPSG:32631", examples=["EPSG:32631"])
     declared_surface_m2: float | None = Field(default=None, gt=0, examples=[549])
-    coordinates: list[CoordinateXY] = Field(
+    # Optionnel : sans coordonnées, la validation ne fait que transiter l'état
+    # (rétro-compatible). Avec coordonnées, on calcule la géométrie + l'audit réel.
+    coordinates: list[CoordinateXY] | None = Field(
+        default=None,
         min_length=3,
         examples=[[[403825.84, 707630.38], [403836.57, 707626.36], [403840.12, 707641.10], [403829.20, 707645.42]]],
     )
@@ -186,22 +189,25 @@ class ProjectValidationRequest(BaseModel):
 )
 def validate_project(
     project_id: str,
-    payload: ProjectValidationRequest,
+    payload: ProjectValidationRequest | None = None,
     db: Session = Depends(get_db),
 ) -> ProjectValidationResponse:
-    # Validation humaine des coordonnées : on calcule la géométrie (Shapely) et on
-    # persiste les entrées d'audit (surface calculée, géométrie invalide ?) pour que
-    # l'audit reflète RÉELLEMENT la parcelle validée (et pas des valeurs par défaut).
-    geometry = validate_polygon(payload.coordinates, payload.source_crs)
+    # La transition (donc le contrôle d'état) D'ABORD : un appel sans corps reste
+    # valide (rétro-compat) et un mauvais état renvoie 409 avant tout calcul.
     response = validate_project_for_audit(project_id, db)
-    upsert_audit_inputs(
-        project_id,
-        db,
-        extraction_score=87,
-        declared_surface_m2=payload.declared_surface_m2,
-        calculated_surface_m2=geometry.area_m2,
-        invalid_geometry=not geometry.valid,
-    )
+    # Corps optionnel : si des coordonnées validées sont fournies, on calcule la
+    # géométrie (Shapely) et on persiste les entrées d'audit → l'audit reflète la
+    # VRAIE parcelle. Sinon l'audit retombe sur ses valeurs par défaut (historique).
+    if payload is not None and payload.coordinates:
+        geometry = validate_polygon(payload.coordinates, payload.source_crs)
+        upsert_audit_inputs(
+            project_id,
+            db,
+            extraction_score=87,
+            declared_surface_m2=payload.declared_surface_m2,
+            calculated_surface_m2=geometry.area_m2,
+            invalid_geometry=not geometry.valid,
+        )
     return response
 
 
