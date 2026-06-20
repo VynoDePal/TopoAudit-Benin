@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 
 import httpx
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
-from app.ocr import MOCK_OCR_TEXT, ocr_rate_limiter
+from app.ocr import MOCK_OCR_TEXT, extract_text_from_document, get_ocr_provider, ocr_rate_limiter
 
 
 class FakeResult:
@@ -104,6 +106,63 @@ class FakeGeminiClient:
     def post(self, url: str, headers: dict[str, str], json: dict):
         FakeGeminiClient.last_request = {"url": url, "headers": headers, "json": json, "timeout": self.timeout}
         return FakeGeminiClient.response
+
+
+def test_ocr_provider_factory_selects_mock(monkeypatch):
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", " mock ")
+
+    provider = get_ocr_provider()
+
+    assert provider.name == "mock"
+    assert provider.extract_text("/missing/file.png", "image/png") == MOCK_OCR_TEXT
+
+
+def test_ocr_provider_factory_falls_back_to_mock_when_azure_is_unconfigured(monkeypatch):
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "azure")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_endpoint", "")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_key", "")
+
+    text, provider_name = extract_text_from_document("/missing/file.png", "image/png")
+
+    assert provider_name == "mock"
+    assert text == MOCK_OCR_TEXT
+
+
+def test_ocr_provider_factory_selects_azure_when_configured(monkeypatch, tmp_path):
+    document_path = tmp_path / "plan.png"
+    document_path.write_bytes(b"fake image bytes")
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "Azure")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_endpoint", "https://azure.example")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_key", "test-azure-key")
+    monkeypatch.setattr("app.ocr._extract_text_with_azure", lambda storage_path, content_type: "Azure OCR text")
+
+    text, provider_name = extract_text_from_document(str(document_path), "image/png")
+
+    assert provider_name == "azure"
+    assert text == "Azure OCR text"
+
+
+def test_ocr_provider_factory_selects_gemini_when_configured(monkeypatch, tmp_path):
+    document_path = tmp_path / "plan.png"
+    document_path.write_bytes(b"fake image bytes")
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "GEMINI")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "test-gemini-key")
+    monkeypatch.setattr("app.ocr._extract_text_with_gemini", lambda storage_path, content_type: "Gemini OCR text")
+
+    text, provider_name = extract_text_from_document(str(document_path), "image/png")
+
+    assert provider_name == "gemini"
+    assert text == "Gemini OCR text"
+
+
+def test_ocr_provider_factory_rejects_unknown_provider(monkeypatch):
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "tesseract")
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_ocr_provider()
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Unsupported OCR provider"
 
 
 def test_ocr_returns_mock_text_when_azure_key_is_missing():
