@@ -2,9 +2,19 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from geoalchemy2 import Geometry, WKTElement
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, event, text
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, event, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+try:
+    from geoalchemy2 import Geometry, WKTElement
+except ModuleNotFoundError:
+    Geometry = None
+
+    class WKTElement(str):
+        def __new__(cls, data: str, srid: int = 4326) -> "WKTElement":
+            element = str.__new__(cls, data)
+            element.srid = srid
+            return element
 
 from app.workflow import ProjectWorkflowState
 
@@ -21,6 +31,12 @@ def _create_postgis_extension(target: Any, connection: Any, **kw: Any) -> None:
 
 def _uuid() -> str:
     return str(uuid4())
+
+
+def _geometry_column(geometry_type: str) -> Any:
+    if Geometry is None:
+        return Text
+    return Geometry(geometry_type=geometry_type, srid=4326, spatial_index=True)
 
 
 def geojson_point_to_wkt_element(point: dict[str, Any], srid: int = 4326) -> WKTElement:
@@ -45,7 +61,23 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     documents: Mapped[list["Document"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    levees: Mapped[list["Levee"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     parcels: Mapped[list["Parcel"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+
+
+class Levee(Base):
+    __tablename__ = "levees"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(100))
+    source_document_id: Mapped[str | None] = mapped_column(ForeignKey("documents.id", ondelete="SET NULL"))
+    detected_crs: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    project: Mapped[Project] = relationship(back_populates="levees")
+    source_document: Mapped["Document"] = relationship(back_populates="levees")
+    parcels: Mapped[list["Parcel"]] = relationship(back_populates="levee", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -61,6 +93,7 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="documents")
+    levees: Mapped[list[Levee]] = relationship(back_populates="source_document")
 
 
 class Parcel(Base):
@@ -68,16 +101,15 @@ class Parcel(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    levee_id: Mapped[str | None] = mapped_column(ForeignKey("levees.id", ondelete="CASCADE"))
     label: Mapped[str] = mapped_column(String(100), nullable=False)
     declared_surface_m2: Mapped[int | None] = mapped_column(Integer)
     detected_crs: Mapped[str | None] = mapped_column(String(32))
-    geom: Mapped[Any | None] = mapped_column(
-        Geometry(geometry_type="POLYGON", srid=4326, spatial_index=True),
-        nullable=True,
-    )
+    geom: Mapped[Any | None] = mapped_column(_geometry_column("POLYGON"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="parcels")
+    levee: Mapped[Levee | None] = relationship(back_populates="parcels")
     points: Mapped[list["SurveyPoint"]] = relationship(back_populates="parcel", cascade="all, delete-orphan")
 
 
@@ -90,10 +122,7 @@ class SurveyPoint(Base):
     source_x: Mapped[float | None]
     source_y: Mapped[float | None]
     confidence: Mapped[float | None] = mapped_column(Float)
-    geom: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="POINT", srid=4326, spatial_index=True),
-        nullable=False,
-    )
+    geom: Mapped[Any] = mapped_column(_geometry_column("POINT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     parcel: Mapped[Parcel] = relationship(back_populates="points")
