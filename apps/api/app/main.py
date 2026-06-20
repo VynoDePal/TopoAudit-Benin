@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, text
 from app.config import settings
 from app.crs import GEOJSON_CRS, SUPPORTED_SOURCE_CRS, transform_coordinates_to_wgs84
 from app.geometry_engine import PolygonValidationResult, validate_polygon
+from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
 
 app = FastAPI(
     title=settings.app_name,
@@ -51,6 +52,11 @@ class PolygonValidationRequest(BaseModel):
     )
 
 
+class SurfaceRiskRequest(BaseModel):
+    declared_surface_m2: float = Field(gt=0, examples=[549])
+    calculated_surface_m2: float = Field(ge=0, examples=[551])
+
+
 def _database_ready() -> bool:
     try:
         engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -84,6 +90,11 @@ def transform_crs(payload: CoordinateTransformRequest) -> CoordinateTransformRes
 @app.post("/api/geometry/validate-polygon", response_model=PolygonValidationResult, tags=["geometry"])
 def validate_polygon_geometry(payload: PolygonValidationRequest) -> PolygonValidationResult:
     return validate_polygon(payload.coordinates, payload.source_crs)
+
+
+@app.post("/api/risk/score-surface", response_model=SurfaceRiskScore, tags=["risk"])
+def score_surface_risk(payload: SurfaceRiskRequest) -> SurfaceRiskScore:
+    return score_surface_deviation(payload.declared_surface_m2, payload.calculated_surface_m2)
 
 
 @app.get("/api", tags=["system"])
