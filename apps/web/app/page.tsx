@@ -1,4 +1,7 @@
+import dynamic from "next/dynamic";
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
+const ParcelMap = dynamic(() => import("./components/ParcelMap"), { ssr: false });
 
 export default function Home() {
   return (
@@ -19,8 +22,13 @@ export default function Home() {
             <span>Frontend Next.js</span>
             <strong>Disponible sur :3000</strong>
           </div>
+          <div className="card">
+            <span>MapLibre GL JS</span>
+            <strong>Parcelles GeoJSON sur tuiles OSM / Esri</strong>
+          </div>
         </div>
       </section>
+      <ParcelMap />
     </main>
   );
 }
