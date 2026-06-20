@@ -2,6 +2,7 @@ import dynamic from "next/dynamic";
 
 import { apiBaseUrl } from "./components/ocrValidationShared";
 const OcrValidationInterface = dynamic(() => import("./components/OcrValidationInterface"), { ssr: false });
+const ResultsReportDashboard = dynamic(() => import("./components/ResultsReportDashboard"), { ssr: false });
 const ParcelMap = dynamic(() => import("./components/ParcelMap"), { ssr: false });
 
 export default function Home() {
@@ -30,6 +31,7 @@ export default function Home() {
         </div>
       </section>
       <OcrValidationInterface />
+      <ResultsReportDashboard />
       <ParcelMap />
     </main>
   );
