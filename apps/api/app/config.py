@@ -7,6 +7,12 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://topoaudit:topoaudit@localhost:5432/topoaudit"
     frontend_url: str = "http://localhost:3000"
     local_storage_path: str = "/data/uploads"
+    ocr_provider: str = "mock"
+    azure_document_intelligence_endpoint: str = ""
+    azure_document_intelligence_key: str = ""
+    azure_document_intelligence_api_version: str = "2024-11-30"
+    azure_document_intelligence_model_id: str = "prebuilt-layout"
+    ocr_rate_limit_per_minute: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
