@@ -13,6 +13,9 @@ class FakeResult:
     def __init__(self, row):
         self.row = row
 
+    def mappings(self):
+        return self
+
     def first(self):
         return self.row
 
@@ -20,6 +23,7 @@ class FakeResult:
 class FakeUploadSession:
     def __init__(self, *, project_exists: bool = True) -> None:
         self.project_exists = project_exists
+        self.project_status: str | None = None
         self.inserted: dict[str, object] | None = None
         self.committed = False
         self.rolled_back = False
@@ -27,9 +31,12 @@ class FakeUploadSession:
     def execute(self, statement: TextClause, params: dict[str, object]):
         sql = str(statement)
         if "FROM projects" in sql:
-            return FakeResult((params["project_id"],) if self.project_exists else None)
+            return FakeResult({"id": params["project_id"], "status": self.project_status} if self.project_exists else None)
         if "INSERT INTO documents" in sql:
             self.inserted = dict(params)
+            return FakeResult(None)
+        if "UPDATE projects SET status" in sql:
+            self.project_status = str(params["status"])
             return FakeResult(None)
         return FakeResult(None)
 
@@ -89,6 +96,7 @@ def test_upload_document_persists_file_and_database_metadata(tmp_path, monkeypat
         "sha256": hashlib.sha256(content).hexdigest(),
         "storage_path": payload["storage_path"],
     }
+    assert session.project_status == "UPLOADED"
     assert session.committed is True
     assert session.rolled_back is False
 
