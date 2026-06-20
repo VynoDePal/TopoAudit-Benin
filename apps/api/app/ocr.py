@@ -2,7 +2,7 @@ import base64
 import time
 from collections import defaultdict, deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from fastapi import HTTPException, Request, status
@@ -82,21 +82,68 @@ def _gemini_generate_url() -> str:
     return f"{endpoint}/models/{model}:generateContent"
 
 
+class OcrProvider(Protocol):
+    name: str
+
+    def is_configured(self) -> bool:
+        ...
+
+    def extract_text(self, storage_path: str, content_type: str | None) -> str:
+        ...
+
+
+class MockOcrProvider:
+    name = "mock"
+
+    def is_configured(self) -> bool:
+        return True
+
+    def extract_text(self, storage_path: str, content_type: str | None) -> str:
+        return MOCK_OCR_TEXT
+
+
+class AzureOcrProvider:
+    name = "azure"
+
+    def is_configured(self) -> bool:
+        return _azure_is_configured()
+
+    def extract_text(self, storage_path: str, content_type: str | None) -> str:
+        return _extract_text_with_azure(storage_path, content_type)
+
+
+class GeminiOcrProvider:
+    name = "gemini"
+
+    def is_configured(self) -> bool:
+        return _gemini_is_configured()
+
+    def extract_text(self, storage_path: str, content_type: str | None) -> str:
+        return _extract_text_with_gemini(storage_path, content_type)
+
+
+OCR_PROVIDER_FACTORIES = {
+    "mock": MockOcrProvider,
+    "azure": AzureOcrProvider,
+    "gemini": GeminiOcrProvider,
+}
+
+
+def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
+    configured_provider = (provider_name or settings.ocr_provider).strip().lower()
+    provider_factory = OCR_PROVIDER_FACTORIES.get(configured_provider)
+    if provider_factory is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported OCR provider")
+
+    provider = provider_factory()
+    if provider.is_configured():
+        return provider
+    return MockOcrProvider()
+
+
 def extract_text_from_document(storage_path: str, content_type: str | None) -> tuple[str, str]:
-    provider = settings.ocr_provider.strip().lower()
-    if provider == "gemini":
-        if not _gemini_is_configured():
-            return MOCK_OCR_TEXT, "mock"
-        return _extract_text_with_gemini(storage_path, content_type), "gemini"
-    if provider == "azure":
-        if not _azure_is_configured():
-            return MOCK_OCR_TEXT, "mock"
-        return _extract_text_with_azure(storage_path, content_type), "azure"
-    if provider == "mock":
-        return MOCK_OCR_TEXT, "mock"
-
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported OCR provider")
-
+    provider = get_ocr_provider()
+    return provider.extract_text(storage_path, content_type), provider.name
 
 
 def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> str:
