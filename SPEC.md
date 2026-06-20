@@ -1,35 +1,35 @@
-# TopoAudit Bénin Prototype
+# TopoAudit-Benin: Intégration OCR Vision & Support Multi-Parcelles
 
-Développement d'un prototype SaaS dockerisé pour l'audit préliminaire de risques fonciers au Bénin à partir de plans topographiques scannés. Le système automatise l'extraction OCR, la validation géométrique et la génération de rapports de risque technique sans valeur juridique.
+Évolution du MVP pour remplacer l'OCR mock par une extraction réelle via Gemini Vision LLM et permettre la gestion de levées contenant plusieurs parcelles distinctes. Le projet inclut également la mise en place de tests frontend et la documentation technique standardisée.
 
 ## Objectifs
-- Implémenter un flux end-to-end : Upload -> OCR -> Validation humaine -> Calcul géométrique -> Audit -> Rapport PDF.
-- Développer des parsers robustes pour les surfaces (ha/are/ca) et les coordonnées variables.
-- Automatiser la détection de CRS et la conversion géospatiale (EPSG:32631 vers EPSG:4326).
-- Calculer des scores de risque basés sur la cohérence technique et l'extraction.
-- Fournir une API FastAPI documentée et une interface Next.js interactive avec visualisation cartographique.
+- Implémenter un moteur d'OCR basé sur Gemini Vision (gemini-2.5-flash) pour extraire coordonnées (UTM 31N) et surfaces.
+- Permettre la sélection dynamique du fournisseur OCR (Mock, Azure, Gemini) via configuration.
+- Développer la logique métier pour traiter et auditer plusieurs parcelles indépendantes au sein d'un même document.
+- Garantir la fiabilité du frontend via des tests automatisés.
+- Produire une documentation technique complète (OpenAPI et services externes).
 
 ## Périmètre
-inclus: Monorepo (FastAPI/Next.js), Docker Compose, OCR (Azure + Mock fallback), Moteur géométrique (Shapely), Gestion de fichiers (max 25Mo), Export PDF (WeasyPrint/ReportLab), Base de données PostGIS.; exclus: Verdict juridique, Scraping de Cadastre.bj (utilisation d'un provider uniquement), Gestion de rôles complexes, Stockage cloud public.
+inclus: Extension du backend FastAPI pour le nouveau provider OCR et le modèle de données multi-parcelles.; Intégration de l'API Gemini dans le workflow d'upload.; Refonte de la logique d'audit pour traiter chaque parcelle séparément.; Mise à jour du rapport PDF (WeasyPrint) pour l'agrégation multi-parcelles.; Écriture de tests unitaires (avec mocks réseau) et tests frontend (apps/web).; Génération de la spec OpenAPI et de la doc des services externes.; exclus: Reconstruction de la stack existante.; Entraînement de modèles de Deep Learning propriétaires (utilisation de LLM existants).; Refonte complète de l'interface utilisateur (UI).
 
 ## Contraintes
-- Stack technique stricte : Python 3.11+, FastAPI, Pydantic v2, SQLAlchemy 2, PostgreSQL/PostGIS, Next.js, TypeScript, MapLibre GL JS.
-- Sécurité : Pas de clés API hardcodées, rate limiting, isolation des fichiers par projet, pas de logging de secrets.
-- Format de sortie GeoJSON : Strictement EPSG:4326 avec ordre [longitude, latitude].
-- Limites de fichiers : Documents JPG/PNG/PDF limités à 25 Mo.
-- Interdiction de scraping direct de Cadastre.bj.
+- Stack technique imposée : FastAPI, Next.js, PostgreSQL/PostGIS, Shapely/pyproj, WeasyPrint.
+- Système de coordonnées strict : UTM 31N / EPSG:32631.
+- Format de données cible : Table de coordonnées (Borne/X/Y) et surface (ha/a/ca).
+- Architecture : Monorepo dockerisé.
+- Contrainte de test : Interdiction d'appels réseau réels lors de l'exécution des tests unitaires OCR.
 
 ## Hypothèses
-- L'utilisateur effectue obligatoirement la validation humaine des coordonnées avant tout calcul.
-- Le fallback OCR Mock est utilisé par défaut si aucune clé Azure n'est configurée.
-- Le stockage des documents est local et isolé par projet au sein du conteneur.
-- La visualisation cartographique utilise MapLibre avec des tuiles standards (OSM/Esri/Google).
+- La clé API Gemini est déjà disponible et injectée dans les variables d'environnement.
+- Le schéma de base de données actuel peut être étendu pour supporter une relation 1:N entre une levée et ses parcelles.
+- Le modèle gemini-2.5-flash est capable de parser correctement les tableaux de coordonnées sur des scans de qualité moyenne.
 
 ## Critères d'acceptation
-- [ ] Le déploiement via `docker compose up --build` est fonctionnel et expose l'API et le Frontend.
-- [ ] L'exécution de `pytest` (backend) et des tests frontend (npm test) est totalement réussie.
-- [ ] Le parser `parse_surface_to_m2` convertit correctement '05a 49ca' en 549 et '29ha 95a 38ca' en 299538.
-- [ ] Le système détecte correctement l'EPSG:32631 et propose une inversion X/Y si les coordonnées sont permutées.
-- [ ] L'écart de surface est classé selon les seuils : $\le 2m^2$ (faible), $\le 5\%$ (modéré), $> 5\%$ (élevé).
-- [ ] Le rapport PDF généré contient l'avertissement de non-responsabilité juridique et les scores de risque.
-- [ ] Le système traite avec succès les 7 cas de test : image nette WGS84, image floue, coordonnées locales, écart de surface, polygone auto-intersecté, inversion X/Y, et multi-parcelles.
+- [ ] L'OCR Gemini extrait avec succès au moins 95% des bornes et la surface correcte d'un plan test standard.
+- [ ] Le sélecteur de provider dans la configuration permet de basculer entre Mock, Azure et Gemini sans crash.
+- [ ] Un upload contenant deux groupes de coordonnées distincts génère deux objets 'parcelle' séparés en base de données.
+- [ ] Le rapport PDF final affiche les audits et surfaces de chaque parcelle individuellement sans fusionner les géométries.
+- [ ] La commande de test unitaire backend passe avec succès en utilisant des mocks pour les appels API Gemini/Azure.
+- [ ] La suite de tests frontend (apps/web) s'exécute sans erreur sur l'environnement de CI.
+- [ ] Le fichier docs/openapi.json est présent et correspond à l'implémentation réelle des endpoints.
+- [ ] Le fichier docs/external_services est présent et détaille les endpoints et formats attendus de Gemini.
