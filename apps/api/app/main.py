@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
@@ -10,6 +11,7 @@ from app.config import settings
 from app.crs import GEOJSON_CRS, SUPPORTED_SOURCE_CRS, transform_coordinates_to_wgs84
 from app.database import get_db, get_engine
 from app.geometry_engine import PolygonValidationResult, validate_polygon
+from app.models import Base, Project
 from app.ocr import OcrResult, enforce_ocr_rate_limit, extract_text_from_document
 from app.pdf_report import generate_audit_report_pdf
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
@@ -19,10 +21,24 @@ from app.workflow import (
     ProjectValidationResponse,
     ProjectWorkflowResponse,
     create_project_audit,
+    ensure_audit_inputs_table,
     get_project_state,
     mark_project_ocr_extracted,
+    upsert_audit_inputs,
     validate_project_for_audit,
 )
+
+
+@asynccontextmanager
+async def lifespan(_app: "FastAPI"):
+    # Applique le schéma au DÉMARRAGE (pas de migration Alembic au runtime sinon la base
+    # déployée reste vide → toutes les routes DB en 500). create_all couvre l'ORM ; la
+    # table audit_inputs (SQL brut, hors ORM) est créée explicitement.
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+    ensure_audit_inputs_table(engine)
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -31,6 +47,7 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -109,6 +126,30 @@ def validate_polygon_geometry(payload: PolygonValidationRequest) -> PolygonValid
     return validate_polygon(payload.coordinates, payload.source_crs)
 
 
+class ProjectCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255, examples=["Audit parcelle Cotonou"])
+
+
+class ProjectCreateResponse(BaseModel):
+    id: str
+    name: str
+    status: str | None
+
+
+@app.post(
+    "/api/projects",
+    response_model=ProjectCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["projects"],
+)
+def create_project(payload: ProjectCreateRequest, db: Session = Depends(get_db)) -> ProjectCreateResponse:
+    project = Project(name=payload.name)
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return ProjectCreateResponse(id=project.id, name=project.name, status=project.status)
+
+
 @app.post(
     "/api/projects/{project_id}/documents",
     response_model=DocumentUploadResponse,
@@ -129,13 +170,39 @@ def get_project_workflow(project_id: str, db: Session = Depends(get_db)) -> Proj
     return ProjectWorkflowResponse(project_id=project_id, state=state)
 
 
+class ProjectValidationRequest(BaseModel):
+    source_crs: SUPPORTED_SOURCE_CRS = Field(default="EPSG:32631", examples=["EPSG:32631"])
+    declared_surface_m2: float | None = Field(default=None, gt=0, examples=[549])
+    coordinates: list[CoordinateXY] = Field(
+        min_length=3,
+        examples=[[[403825.84, 707630.38], [403836.57, 707626.36], [403840.12, 707641.10], [403829.20, 707645.42]]],
+    )
+
+
 @app.post(
     "/api/projects/{project_id}/validate",
     response_model=ProjectValidationResponse,
     tags=["workflow"],
 )
-def validate_project(project_id: str, db: Session = Depends(get_db)) -> ProjectValidationResponse:
-    return validate_project_for_audit(project_id, db)
+def validate_project(
+    project_id: str,
+    payload: ProjectValidationRequest,
+    db: Session = Depends(get_db),
+) -> ProjectValidationResponse:
+    # Validation humaine des coordonnées : on calcule la géométrie (Shapely) et on
+    # persiste les entrées d'audit (surface calculée, géométrie invalide ?) pour que
+    # l'audit reflète RÉELLEMENT la parcelle validée (et pas des valeurs par défaut).
+    geometry = validate_polygon(payload.coordinates, payload.source_crs)
+    response = validate_project_for_audit(project_id, db)
+    upsert_audit_inputs(
+        project_id,
+        db,
+        extraction_score=87,
+        declared_surface_m2=payload.declared_surface_m2,
+        calculated_surface_m2=geometry.area_m2,
+        invalid_geometry=not geometry.valid,
+    )
+    return response
 
 
 @app.post("/api/projects/{project_id}/audit", response_model=AuditResponse, tags=["audits"])
