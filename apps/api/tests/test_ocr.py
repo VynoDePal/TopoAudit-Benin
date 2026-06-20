@@ -108,6 +108,67 @@ class FakeGeminiClient:
         return FakeGeminiClient.response
 
 
+class FakeAzureResponse:
+    def __init__(
+        self,
+        payload: dict | None = None,
+        headers: dict[str, str] | None = None,
+        status_error: Exception | None = None,
+    ) -> None:
+        self.payload = payload or {}
+        self.headers = headers or {}
+        self.status_error = status_error
+
+    def raise_for_status(self):
+        if self.status_error:
+            raise self.status_error
+
+    def json(self):
+        return self.payload
+
+
+class FakeAzureClient:
+    last_post = None
+    get_calls: list[dict[str, object]] = []
+    post_response = FakeAzureResponse(headers={"operation-location": "https://azure.example/operations/123"})
+    get_responses = [
+        FakeAzureResponse({"status": "running"}),
+        FakeAzureResponse(
+            {
+                "status": "succeeded",
+                "analyzeResult": {
+                    "pages": [
+                        {
+                            "lines": [
+                                {"content": "Parcelle A"},
+                                {"content": "Surface déclarée: 05a 49ca"},
+                                {"content": "P1 403825.84 707630.38"},
+                            ]
+                        }
+                    ]
+                },
+            }
+        ),
+    ]
+
+    def __init__(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def post(self, url: str, headers: dict[str, str], content: bytes):
+        FakeAzureClient.last_post = {"url": url, "headers": headers, "content": content, "timeout": self.timeout}
+        return FakeAzureClient.post_response
+
+    def get(self, url: str, headers: dict[str, str]):
+        FakeAzureClient.get_calls.append({"url": url, "headers": headers, "timeout": self.timeout})
+        return FakeAzureClient.get_responses.pop(0)
+
+
 def test_ocr_provider_factory_selects_mock(monkeypatch):
     monkeypatch.setattr("app.ocr.settings.ocr_provider", " mock ")
 
@@ -203,6 +264,104 @@ def test_ocr_rejects_document_from_another_project():
     response = client.post("/api/projects/project-1/documents/document-1/ocr")
 
     assert response.status_code == 403
+
+
+def test_ocr_uses_azure_provider_with_polling_without_real_network(monkeypatch, tmp_path):
+    document_path = tmp_path / "plan.pdf"
+    document_path.write_bytes(b"%PDF-1.4 fake bytes")
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id="document-1",
+        project_id="project-1",
+        filename="plan.pdf",
+        content_type="application/pdf",
+        storage_path=str(document_path),
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "azure")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_endpoint", "https://azure.example/")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_key", "test-azure-key")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_model_id", "prebuilt-layout")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_api_version", "2024-11-30")
+    monkeypatch.setattr("app.ocr.httpx.Client", FakeAzureClient)
+    monkeypatch.setattr("app.ocr.time.sleep", lambda _seconds: None)
+    FakeAzureClient.last_post = None
+    FakeAzureClient.get_calls = []
+    FakeAzureClient.post_response = FakeAzureResponse(headers={"operation-location": "https://azure.example/operations/123"})
+    FakeAzureClient.get_responses = [
+        FakeAzureResponse({"status": "running"}),
+        FakeAzureResponse(
+            {
+                "status": "succeeded",
+                "analyzeResult": {
+                    "pages": [
+                        {
+                            "lines": [
+                                {"content": "Parcelle A"},
+                                {"content": "Surface déclarée: 05a 49ca"},
+                                {"content": "P1 403825.84 707630.38"},
+                            ]
+                        }
+                    ]
+                },
+            }
+        ),
+    ]
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "azure"
+    assert payload["text"] == "Parcelle A\nSurface déclarée: 05a 49ca\nP1 403825.84 707630.38"
+    assert FakeAzureClient.last_post is not None
+    assert FakeAzureClient.last_post["url"] == (
+        "https://azure.example/documentintelligence/documentModels/"
+        "prebuilt-layout:analyze?api-version=2024-11-30"
+    )
+    assert FakeAzureClient.last_post["headers"] == {
+        "Ocp-Apim-Subscription-Key": "test-azure-key",
+        "Content-Type": "application/pdf",
+    }
+    assert FakeAzureClient.last_post["content"] == b"%PDF-1.4 fake bytes"
+    assert FakeAzureClient.get_calls == [
+        {
+            "url": "https://azure.example/operations/123",
+            "headers": {"Ocp-Apim-Subscription-Key": "test-azure-key"},
+            "timeout": 30.0,
+        },
+        {
+            "url": "https://azure.example/operations/123",
+            "headers": {"Ocp-Apim-Subscription-Key": "test-azure-key"},
+            "timeout": 30.0,
+        },
+    ]
+    assert project.status == "OCR_EXTRACTED"
+
+
+def test_ocr_body_endpoint_reuses_scoped_document_validation_and_mock_provider():
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id="document-1",
+        project_id="project-1",
+        filename="plan.png",
+        content_type="image/png",
+        storage_path="/tmp/plan.png",
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+    client = TestClient(app)
+
+    response = client.post("/api/ocr", json={"project_id": "project-1", "document_id": "document-1"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "mock",
+        "text": MOCK_OCR_TEXT,
+        "document_id": "document-1",
+        "project_id": "project-1",
+    }
+    assert project.status == "OCR_EXTRACTED"
 
 
 def test_ocr_rejects_missing_project_before_processing_document():
