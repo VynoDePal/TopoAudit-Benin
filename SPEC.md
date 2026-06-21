@@ -1,35 +1,38 @@
-# TopoAudit-Benin: Intégration OCR Vision & Support Multi-Parcelles
+# TopoAudit-Benin Prototype Hardening
 
-Évolution du MVP pour remplacer l'OCR mock par une extraction réelle via Gemini Vision LLM et permettre la gestion de levées contenant plusieurs parcelles distinctes. Le projet inclut également la mise en place de tests frontend et la documentation technique standardisée.
+Mission de durcissement du prototype SaaS TopoAudit-Benin pour préparer une démonstration réelle. L'objectif est de transformer le prototype en une version fiable, vérifiable et cohérente sans ajouter de nouvelles fonctionnalités.
 
 ## Objectifs
-- Implémenter un moteur d'OCR basé sur Gemini Vision (gemini-2.5-flash) pour extraire coordonnées (UTM 31N) et surfaces.
-- Permettre la sélection dynamique du fournisseur OCR (Mock, Azure, Gemini) via configuration.
-- Développer la logique métier pour traiter et auditer plusieurs parcelles indépendantes au sein d'un même document.
-- Garantir la fiabilité du frontend via des tests automatisés.
-- Produire une documentation technique complète (OpenAPI et services externes).
+- Standardiser la configuration du modèle Gemini (gemma-4-31b-it) sur l'ensemble de la stack
+- Sécuriser et fiabiliser la logique de fallback OCR selon l'environnement (local vs staging/prod)
+- Garantir la synchronisation parfaite entre le code FastAPI et la documentation OpenAPI
+- Remplacer les scores d'audit statiques par un moteur de calcul dynamique basé sur les données extraites
+- Renforcer la validation des uploads de fichiers (taille et type)
+- Documenter le projet et les services externes pour permettre un onboarding rapide (< 15 min)
+- Mettre en place un framework d'évaluation automatisé de la précision OCR
 
 ## Périmètre
-inclus: Extension du backend FastAPI pour le nouveau provider OCR et le modèle de données multi-parcelles.; Intégration de l'API Gemini dans le workflow d'upload.; Refonte de la logique d'audit pour traiter chaque parcelle séparément.; Mise à jour du rapport PDF (WeasyPrint) pour l'agrégation multi-parcelles.; Écriture de tests unitaires (avec mocks réseau) et tests frontend (apps/web).; Génération de la spec OpenAPI et de la doc des services externes.; exclus: Reconstruction de la stack existante.; Entraînement de modèles de Deep Learning propriétaires (utilisation de LLM existants).; Refonte complète de l'interface utilisateur (UI).
+inclus: Alignement config Gemini, logique de fallback OCR, génération/validation OpenAPI, moteur de calcul de score, validation upload, README racine, dataset de test/script d'évaluation, documentation des services externes.; exclus: Développement de nouvelles fonctionnalités métier, refonte de l'interface utilisateur (UI), migration de base de données majeure, intégration de nouveaux fournisseurs OCR.
 
 ## Contraintes
-- Stack technique imposée : FastAPI, Next.js, PostgreSQL/PostGIS, Shapely/pyproj, WeasyPrint.
-- Système de coordonnées strict : UTM 31N / EPSG:32631.
-- Format de données cible : Table de coordonnées (Borne/X/Y) et surface (ha/a/ca).
-- Architecture : Monorepo dockerisé.
-- Contrainte de test : Interdiction d'appels réseau réels lors de l'exécution des tests unitaires OCR.
+- Modèle par défaut obligatoire : gemma-4-31b-it
+- Interdiction de fallback silencieux en staging/production (erreur 503 requise)
+- Interdiction de logger les clés API
+- Aucun appel réseau autorisé lors de l'exécution des tests OCR
+- Respect strict de la stack : FastAPI, Next.js, PostgreSQL/PostGIS, Gemini Vision
 
 ## Hypothèses
-- La clé API Gemini est déjà disponible et injectée dans les variables d'environnement.
-- Le schéma de base de données actuel peut être étendu pour supporter une relation 1:N entre une levée et ses parcelles.
-- Le modèle gemini-2.5-flash est capable de parser correctement les tableaux de coordonnées sur des scans de qualité moyenne.
+- L'environnement APP_ENV est correctement injecté via Docker/CI
+- Les données nécessaires au calcul du score (coordonnées, surface, CRS) sont présentes dans les résultats OCR
+- Le développeur dispose d'un environnement Docker et Node/Python fonctionnel
 
 ## Critères d'acceptation
-- [ ] L'OCR Gemini extrait avec succès au moins 95% des bornes et la surface correcte d'un plan test standard.
-- [ ] Le sélecteur de provider dans la configuration permet de basculer entre Mock, Azure et Gemini sans crash.
-- [ ] Un upload contenant deux groupes de coordonnées distincts génère deux objets 'parcelle' séparés en base de données.
-- [ ] Le rapport PDF final affiche les audits et surfaces de chaque parcelle individuellement sans fusionner les géométries.
-- [ ] La commande de test unitaire backend passe avec succès en utilisant des mocks pour les appels API Gemini/Azure.
-- [ ] La suite de tests frontend (apps/web) s'exécute sans erreur sur l'environnement de CI.
-- [ ] Le fichier docs/openapi.json est présent et correspond à l'implémentation réelle des endpoints.
-- [ ] Le fichier docs/external_services est présent et détaille les endpoints et formats attendus de Gemini.
+- [ ] La commande 'docker compose up' lance avec succès la DB, l'API et le Web sans erreur
+- [ ] L'exécution de 'pytest' et 'npm test/build' renvoie un code de sortie 0
+- [ ] Le fichier 'docs/openapi.json' contient les endpoints obligatoires et passe le test de synchronisation avec FastAPI
+- [ ] En mode staging/production, l'absence de credentials OCR provoque une erreur HTTP 503 explicite
+- [ ] La réponse JSON de l'OCR contient les champs 'configured_provider', 'actual_provider' et 'is_mock_result'
+- [ ] Le score d'audit varie dynamiquement en fonction de la qualité des données extraites (plus de valeur codée en dur)
+- [ ] Un fichier dépassant 'MAX_UPLOAD_MB' ou d'un type non autorisé (hors PDF/PNG/JPG/JPEG) est rejeté avec une erreur API propre
+- [ ] Un nouveau développeur peut lancer la démo complète en suivant le README en moins de 15 minutes
+- [ ] Le script 'apps/api/scripts/evaluate_ocr.py' valide le dataset de test sans erreur
