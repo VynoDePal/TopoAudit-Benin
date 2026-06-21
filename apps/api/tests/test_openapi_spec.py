@@ -16,6 +16,12 @@ def test_committed_openapi_spec_matches_fastapi_schema():
     assert load_committed_openapi_spec() == app.openapi()
 
 
+def test_openapi_spec_includes_every_documented_fastapi_endpoint():
+    spec = load_committed_openapi_spec()
+
+    assert set(spec["paths"]) == set(app.openapi()["paths"])
+
+
 def test_openapi_spec_documents_multi_parcel_audit_contract():
     spec = load_committed_openapi_spec()
 
