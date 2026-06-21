@@ -421,7 +421,7 @@ def test_ocr_uses_gemini_provider_for_utm_coordinates_and_surface(monkeypatch, t
     assert "Surface déclarée: 05a 49ca" in payload["text"]
     assert "403825.84 707630.38" in payload["text"]
     assert FakeGeminiClient.last_request is not None
-    assert FakeGeminiClient.last_request["url"].endswith("/models/gemini-2.5-flash:generateContent")
+    assert FakeGeminiClient.last_request["url"].endswith("/models/gemma-4-31b-it:generateContent")
     assert FakeGeminiClient.last_request["headers"] == {"x-goog-api-key": "test-gemini-key"}
     parts = FakeGeminiClient.last_request["json"]["contents"][0]["parts"]
     assert "UTM zone 31N" in parts[0]["text"]

@@ -24,6 +24,8 @@ services:
       DATABASE_URL: postgresql+psycopg://topoaudit:topoaudit@db:5432/topoaudit
       FRONTEND_URL: http://localhost:3000
       LOCAL_STORAGE_PATH: /data/uploads
+      OCR_PROVIDER: gemini
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
