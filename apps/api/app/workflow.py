@@ -55,6 +55,9 @@ class _AuditInputs(BaseModel):
     invalid_geometry: bool = False
     parcel_id: str | None = None
     label: str = "Parcelle validée"
+    detected_crs: str | None = None
+    point_count: int = 0
+    average_point_confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 _ALLOWED_PREVIOUS_STATES: dict[ProjectWorkflowState, set[ProjectWorkflowState | None]] = {
@@ -180,6 +183,46 @@ def _coerce_source_coordinate(value: object) -> float | None:
         return None
 
 
+def _coerce_confidence(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return None
+    if confidence > 1:
+        confidence = confidence / 100
+    return max(0.0, min(1.0, confidence))
+
+
+def _compute_extraction_score(
+    *,
+    point_count: int,
+    declared_surface_m2: float | None,
+    detected_crs: str | None,
+    average_point_confidence: float | None,
+) -> int:
+    if average_point_confidence is None:
+        return 87
+
+    score = 0.0
+    if point_count >= 3:
+        score += 30
+    elif point_count > 0:
+        score += 10 * point_count
+
+    score += 30 * average_point_confidence
+
+    if declared_surface_m2 is not None:
+        score += 15
+    if detected_crs in {"EPSG:32631", "EPSG:4326"}:
+        score += 15
+    if point_count >= 3 and declared_surface_m2 is not None:
+        score += 10
+
+    return max(0, min(100, round(score)))
+
+
 def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs]:
     rows = (
         db.execute(
@@ -191,7 +234,8 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                     p.declared_surface_m2 AS declared_surface_m2,
                     p.detected_crs AS detected_crs,
                     sp.source_x AS source_x,
-                    sp.source_y AS source_y
+                    sp.source_y AS source_y,
+                    sp.confidence AS confidence
                 FROM parcels p
                 LEFT JOIN survey_points sp ON sp.parcel_id = p.id
                 WHERE p.project_id = :project_id
@@ -214,30 +258,45 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                 "declared_surface_m2": row.get("declared_surface_m2"),
                 "detected_crs": row.get("detected_crs") or "EPSG:32631",
                 "coordinates": [],
+                "confidences": [],
             },
         )
         source_x = _coerce_source_coordinate(row.get("source_x"))
         source_y = _coerce_source_coordinate(row.get("source_y"))
         if source_x is not None and source_y is not None:
             parcel["coordinates"].append([source_x, source_y])
+        confidence = _coerce_confidence(row.get("confidence"))
+        if confidence is not None:
+            parcel["confidences"].append(confidence)
 
     inputs: list[_AuditInputs] = []
     for parcel in parcels.values():
         coordinates = parcel["coordinates"]
+        confidences = parcel["confidences"]
         calculated_surface_m2: float | None = None
         invalid_geometry = True
         if isinstance(coordinates, list) and len(coordinates) >= 3:
             geometry = validate_polygon(coordinates, str(parcel["detected_crs"] or "EPSG:32631"))
             calculated_surface_m2 = geometry.area_m2
             invalid_geometry = not geometry.valid
+        average_confidence = sum(confidences) / len(confidences) if isinstance(confidences, list) and confidences else None
+        point_count = len(coordinates) if isinstance(coordinates, list) else 0
         inputs.append(
             _AuditInputs(
                 parcel_id=str(parcel["parcel_id"]),
                 label=str(parcel["label"]),
-                extraction_score=87,
+                extraction_score=_compute_extraction_score(
+                    point_count=point_count,
+                    declared_surface_m2=parcel["declared_surface_m2"],
+                    detected_crs=str(parcel["detected_crs"] or ""),
+                    average_point_confidence=average_confidence,
+                ),
                 declared_surface_m2=parcel["declared_surface_m2"],
                 calculated_surface_m2=calculated_surface_m2,
                 invalid_geometry=invalid_geometry,
+                detected_crs=str(parcel["detected_crs"] or ""),
+                point_count=point_count,
+                average_point_confidence=average_confidence,
             )
         )
     return inputs
@@ -246,10 +305,16 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
 def _load_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs]:
     _ensure_project_exists(project_id, db)
     parcel_inputs = _load_parcel_audit_inputs(project_id, db)
-    if parcel_inputs:
-        return parcel_inputs
-
     project_input = _load_project_audit_input(project_id, db)
+
+    if parcel_inputs:
+        has_dynamic_parcel_metrics = any(
+            parcel_input.calculated_surface_m2 is not None or parcel_input.average_point_confidence is not None
+            for parcel_input in parcel_inputs
+        )
+        if has_dynamic_parcel_metrics or project_input is None:
+            return parcel_inputs
+
     return [project_input or _AuditInputs(extraction_score=87)]
 
 
