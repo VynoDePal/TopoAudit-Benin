@@ -195,12 +195,13 @@ def test_upload_rejects_declared_mime_when_content_signature_does_not_match(tmp_
     assert list((tmp_path / "project-1").glob("*")) == []
 
 
-def test_upload_rejects_files_larger_than_25_mb(tmp_path, monkeypatch):
+def test_upload_rejects_files_larger_than_max_upload_mb(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "local_storage_path", str(tmp_path))
+    monkeypatch.setattr(settings, "max_upload_mb", 1)
     session = FakeUploadSession()
     app.dependency_overrides[get_db] = override_db(session)
     client = TestClient(app)
-    content = b"%PDF-" + (b"x" * (25 * 1024 * 1024 - 4))
+    content = b"%PDF-" + (b"x" * (1024 * 1024))
 
     response = client.post(
         "/api/projects/project-1/documents",
@@ -208,6 +209,7 @@ def test_upload_rejects_files_larger_than_25_mb(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 413
+    assert response.json()["detail"] == "File exceeds the 1 MB limit"
     assert session.inserted is None
     assert list((tmp_path / "project-1").glob("*")) == []
 
