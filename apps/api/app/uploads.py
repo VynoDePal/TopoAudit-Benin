@@ -15,7 +15,7 @@ from app.config import settings
 from app.crs import transform_coordinate_to_wgs84
 from app.ocr import extract_text_from_document
 from app.surface_parser import parse_surface_to_m2
-from app.workflow import mark_project_uploaded
+from app.workflow import mark_project_ocr_extracted, mark_project_uploaded
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {
@@ -347,6 +347,10 @@ def create_document_from_upload(project_id: str, file: UploadFile, db: Session) 
             db=db,
         )
         mark_project_uploaded(project_id, db)
+        # L'upload a DÉJÀ réalisé l'OCR (extract_text_from_document) et posé les parcelles ;
+        # on transite donc directement en OCR_EXTRACTED. Évite un 2ᵉ appel OCR redondant
+        # (lent + flaky) via /ocr : le flux devient upload → validate → audit.
+        mark_project_ocr_extracted(project_id, db)
     except Exception:
         db.rollback()
         Path(storage_path).unlink(missing_ok=True)

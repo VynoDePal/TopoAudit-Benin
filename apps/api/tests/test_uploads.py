@@ -108,7 +108,9 @@ def test_upload_document_persists_file_and_database_metadata(tmp_path, monkeypat
         "sha256": hashlib.sha256(content).hexdigest(),
         "storage_path": payload["storage_path"],
     }
-    assert session.project_status == "UPLOADED"
+    # L'upload réalise l'OCR + pose les parcelles → état directement OCR_EXTRACTED
+    # (plus besoin d'un appel /ocr séparé avant validate).
+    assert session.project_status == "OCR_EXTRACTED"
     assert session.committed is True
     assert session.rolled_back is False
 
