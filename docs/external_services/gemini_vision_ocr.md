@@ -17,7 +17,7 @@ La sortie attendue par TopoAudit est du texte brut. La validation humaine reste 
 
 - Envoyer à Gemini un fichier de document déjà importé par l'utilisateur, via le backend FastAPI.
 - Utiliser Gemini uniquement pour l'extraction OCR/texte des plans.
-- Conserver le fournisseur `mock` comme fallback lorsque la clé Gemini n'est pas configurée.
+- Conserver le fournisseur `mock` comme fallback local lorsque la clé Gemini n'est pas configurée.
 - Faire traiter ensuite le texte extrait par les parseurs internes et l'interface de validation humaine.
 
 ## Usage interdit
@@ -137,7 +137,7 @@ POST /api/projects/{project_id}/documents/{document_id}/ocr
 POST /api/ocr
 ```
 
-Réponse interne normalisée :
+Réponse interne normalisée actuelle :
 
 ```json
 {
@@ -148,13 +148,15 @@ Réponse interne normalisée :
 }
 ```
 
+Le champ `provider` indique le fournisseur effectivement utilisé. En local, il peut donc valoir `mock` lorsque `OCR_PROVIDER=gemini` mais que `GEMINI_API_KEY` est vide.
+
 Avant l'appel OCR, le backend vérifie que le projet existe et que le document appartient au projet. Après extraction, le projet est marqué comme OCR extrait par le workflow interne.
 
 ## Gestion d'erreurs et fallback
 
 | Situation | Comportement TopoAudit |
 | --- | --- |
-| `OCR_PROVIDER=gemini` mais `GEMINI_API_KEY` vide | fallback automatique vers le provider `mock` |
+| `APP_ENV=local`, `OCR_PROVIDER=gemini` mais `GEMINI_API_KEY` vide | fallback automatique vers le provider `mock` pour permettre la démo locale |
 | provider inconnu | `400 Unsupported OCR provider` |
 | fichier absent | `404 Document file not found` |
 | erreur HTTP Gemini (`4xx`/`5xx`) | `502 Gemini OCR request failed` |
@@ -162,7 +164,7 @@ Avant l'appel OCR, le backend vérifie que le projet existe et que le document a
 | réponse sans texte exploitable | `502 Gemini OCR response is empty` |
 | limite OCR interne dépassée | `429 OCR rate limit exceeded` |
 
-Le fallback mock est volontaire pour permettre les tests et démonstrations locales sans clé externe. En production, surveiller explicitement le champ `provider` de la réponse pour détecter un fallback non souhaité.
+Le fallback mock est volontaire pour permettre les tests et démonstrations locales sans clé externe. En staging/production, l'absence de credentials OCR doit être traitée comme une erreur de configuration explicite, pas comme un fallback silencieux. Surveiller le champ `provider` de la réponse pour détecter tout fallback non souhaité.
 
 ## Contraintes de sécurité et confidentialité
 

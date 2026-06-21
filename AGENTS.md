@@ -28,3 +28,5 @@
 
 - PDF report generation lives in `apps/api/app/pdf_report.py` and is exposed via `POST /api/projects/{project_id}/audit/report.pdf`; it reuses `create_project_audit`, returns `application/pdf`, includes `LEGAL_DISCLAIMER`, and is implemented with WeasyPrint HTML rendering plus `pypdf`-based endpoint/content tests. The report must present audit/surface details per parcel without merging parcel geometries.
 
+- Root onboarding documentation now lives in `README.md`; it is written in French and optimized for a <15 minute Docker Compose demo (`cp .env.example .env`, `docker compose up --build`, web at `:3000`, API docs at `/api/docs`).
+
