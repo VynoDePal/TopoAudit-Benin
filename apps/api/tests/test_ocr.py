@@ -178,7 +178,8 @@ def test_ocr_provider_factory_selects_mock(monkeypatch):
     assert provider.extract_text("/missing/file.png", "image/png") == MOCK_OCR_TEXT
 
 
-def test_ocr_provider_factory_falls_back_to_mock_when_azure_is_unconfigured(monkeypatch):
+def test_ocr_provider_factory_falls_back_to_mock_when_azure_is_unconfigured_locally(monkeypatch):
+    monkeypatch.setattr("app.ocr.settings.app_env", "local")
     monkeypatch.setattr("app.ocr.settings.ocr_provider", "azure")
     monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_endpoint", "")
     monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_key", "")
@@ -187,6 +188,22 @@ def test_ocr_provider_factory_falls_back_to_mock_when_azure_is_unconfigured(monk
 
     assert provider_name == "mock"
     assert text == MOCK_OCR_TEXT
+
+
+@pytest.mark.parametrize("app_env", ["staging", "production"])
+@pytest.mark.parametrize("provider_name", ["azure", "gemini"])
+def test_ocr_provider_factory_rejects_missing_credentials_outside_local(monkeypatch, app_env, provider_name):
+    monkeypatch.setattr("app.ocr.settings.app_env", app_env)
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", provider_name)
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_endpoint", "")
+    monkeypatch.setattr("app.ocr.settings.azure_document_intelligence_key", "")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "")
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_ocr_provider()
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == f"OCR provider '{provider_name}' credentials are not configured"
 
 
 def test_ocr_provider_factory_selects_azure_when_configured(monkeypatch, tmp_path):
@@ -428,7 +445,7 @@ def test_ocr_uses_gemini_provider_for_utm_coordinates_and_surface(monkeypatch, t
     assert parts[1]["inline_data"]["mime_type"] == "image/png"
 
 
-def test_ocr_falls_back_to_mock_when_gemini_key_is_missing(monkeypatch):
+def test_ocr_falls_back_to_mock_when_gemini_key_is_missing_locally(monkeypatch):
     project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
     document = SimpleNamespace(
         id="document-1",
@@ -438,6 +455,7 @@ def test_ocr_falls_back_to_mock_when_gemini_key_is_missing(monkeypatch):
         storage_path="/tmp/plan.png",
     )
     app.dependency_overrides[get_db] = override_db(project, document)
+    monkeypatch.setattr("app.ocr.settings.app_env", "local")
     monkeypatch.setattr("app.ocr.settings.ocr_provider", "gemini")
     monkeypatch.setattr("app.ocr.settings.gemini_api_key", "")
     client = TestClient(app)
@@ -447,6 +465,27 @@ def test_ocr_falls_back_to_mock_when_gemini_key_is_missing(monkeypatch):
     assert response.status_code == 200
     assert response.json()["provider"] == "mock"
     assert response.json()["text"] == MOCK_OCR_TEXT
+
+
+def test_ocr_returns_503_when_gemini_key_is_missing_in_staging(monkeypatch):
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id="document-1",
+        project_id="project-1",
+        filename="plan.png",
+        content_type="image/png",
+        storage_path="/tmp/plan.png",
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+    monkeypatch.setattr("app.ocr.settings.app_env", "staging")
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "gemini")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "")
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr")
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "OCR provider 'gemini' credentials are not configured"}
 
 
 def test_ocr_maps_gemini_http_errors_to_bad_gateway(monkeypatch, tmp_path):

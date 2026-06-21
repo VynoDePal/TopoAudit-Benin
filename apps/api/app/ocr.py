@@ -129,6 +129,10 @@ OCR_PROVIDER_FACTORIES = {
 }
 
 
+def _allows_unconfigured_ocr_fallback() -> bool:
+    return settings.app_env.strip().lower() not in {"staging", "production"}
+
+
 def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
     configured_provider = (provider_name or settings.ocr_provider).strip().lower()
     provider_factory = OCR_PROVIDER_FACTORIES.get(configured_provider)
@@ -138,7 +142,13 @@ def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
     provider = provider_factory()
     if provider.is_configured():
         return provider
-    return MockOcrProvider()
+    if _allows_unconfigured_ocr_fallback():
+        return MockOcrProvider()
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=f"OCR provider '{configured_provider}' credentials are not configured",
+    )
 
 
 def extract_text_from_document(storage_path: str, content_type: str | None) -> tuple[str, str]:
