@@ -151,18 +151,18 @@ def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> st
     if not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 
-    # Prompt strict : on force une sortie LIGNE-À-LIGNE directement parsable par
-    # extract_parcels_from_ocr_text (`LABEL X Y`, en-tête `Parcelle <n>`, `SURFACE: ...`),
-    # robuste aux modèles verbeux (gemma-4-31b ajoute du préambule, ignoré par le parser
-    # tant que les lignes de bornes restent au format attendu).
+    # Prompt durci pour la PRÉCISION : lecture chiffre par chiffre, UNE seule liste finale
+    # (ne pas répéter les bornes — sinon un modèle verbeux les liste plusieurs fois et la
+    # géométrie est corrompue), dans l'ORDRE de la table = ordre du contour de la parcelle
+    # (polygone simple/valide). La dédup d'écho est assurée côté parser (uploads.py).
     prompt = (
-        "Tu es un OCR de plans topographiques (Bénin). Lis la ou les tables de coordonnées "
-        "(colonnes Borne/X/Y) et la surface déclarée (ha/a/ca). "
-        "Réponds UNIQUEMENT par des lignes de données, SANS préambule, commentaire, markdown "
-        "ni raisonnement. Une ligne par borne au format EXACT `LABEL X Y` (X et Y = nombres "
-        "UTM zone 31N séparés par un espace, ex. `B1 380553.47 747683.20`). Si le plan contient "
-        "plusieurs parcelles, précède chaque groupe de bornes d'une ligne `Parcelle <n>` et "
-        "termine chaque parcelle par une ligne `SURFACE: <valeur ha/a/ca>`. Aucune autre ligne."
+        "Tu es un OCR EXPERT de plans topographiques (Bénin). Lis TRÈS attentivement la ou les "
+        "tables de coordonnées (colonnes Borne/X/Y ; coordonnées UTM zone 31N à ~2 décimales) en "
+        "vérifiant CHAQUE chiffre. Donne UNE SEULE liste finale, dans l'ORDRE EXACT de la table "
+        "(= ordre du contour de la parcelle), une borne par ligne au format EXACT `LABEL X Y` "
+        "(nombres séparés par un espace, ex. `B1 380557.07 747662.20`). NE RÉPÈTE AUCUNE borne. "
+        "Si plusieurs parcelles, précède chaque groupe d'une ligne `Parcelle <n>`. Termine chaque "
+        "parcelle par une ligne `SURFACE: <valeur ha/a/ca>`. N'écris RIEN d'autre."
     )
     payload = {
         "contents": [
@@ -178,7 +178,9 @@ def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> st
                     },
                 ],
             }
-        ]
+        ],
+        # temperature 0 : lecture déterministe, moins de « créativité » sur les chiffres.
+        "generationConfig": {"temperature": 0},
     }
     headers = {"x-goog-api-key": settings.gemini_api_key}
 

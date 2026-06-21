@@ -195,7 +195,7 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                 FROM parcels p
                 LEFT JOIN survey_points sp ON sp.parcel_id = p.id
                 WHERE p.project_id = :project_id
-                ORDER BY p.created_at, p.id, sp.created_at, sp.label
+                ORDER BY p.created_at, p.id, sp.point_index
                 """
             ),
             {"project_id": project_id},
