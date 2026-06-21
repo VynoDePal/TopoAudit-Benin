@@ -50,10 +50,15 @@ class ExtractedParcel:
     points: list[ExtractedSurveyPoint]
 
 
+# Tolérant aux sorties des modèles vision verbeux (gemma) : « B1 380 747 »,
+# « B1: 380 747 », « - B1: X = 380.5, Y = 747.2 », « B3: X=420 Y=706 ». Les
+# en-têtes (Borne X Y), surfaces et lignes de consigne ne matchent pas (x/y exigent
+# des nombres). Décimale « . » ou « , » ; séparateur X/Y optionnel.
 _COORDINATE_LINE_PATTERN = re.compile(
-    r"^\s*(?P<label>[A-Za-z]{0,4}\d+[A-Za-z0-9_-]*)\s*[:;,-]?\s+"
-    r"(?P<x>\d{2,}(?:[.,]\d+)?)\s+"
-    r"(?P<y>\d{2,}(?:[.,]\d+)?)\s*$"
+    r"^\s*[-*••\s]*"
+    r"(?P<label>[A-Za-z]{0,4}\d+[A-Za-z0-9_-]*)\s*[:;.\-]?\s*"
+    r"(?:[Xx]\s*[=:]?\s*)?(?P<x>\d{2,}(?:[.,]\d+)?)\s*[,;]?\s*"
+    r"(?:[Yy]\s*[=:]?\s*)?(?P<y>\d{2,}(?:[.,]\d+)?)\s*$"
 )
 _PARCEL_HEADING_PATTERN = re.compile(r"\bparcelle\s+(?P<label>[A-Za-z0-9_-]+)", re.IGNORECASE)
 _SURFACE_LINE_PATTERN = re.compile(r"\b(surface|superficie)\b", re.IGNORECASE)
