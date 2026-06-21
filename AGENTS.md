@@ -33,3 +33,6 @@
 
 - Root onboarding documentation now lives in `README.md`; it is written in French and optimized for a <15 minute Docker Compose demo (`cp .env.example .env`, `docker compose up --build`, web at `:3000`, API docs at `/api/docs`).
 
+
+- OCR evaluation framework for issue #67 lives in `apps/api/scripts/evaluate_ocr.py` with dataset `apps/api/datasets/ocr/manifest.json`; run it with `PYTHONPATH=apps/api python apps/api/scripts/evaluate_ocr.py --pretty --min-accuracy 1.0`. It is intentionally network-free and reuses `extract_parcels_from_ocr_text`.
+

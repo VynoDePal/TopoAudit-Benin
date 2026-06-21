@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "description": "Dataset OCR local pour évaluer l'extraction des plans topographiques sans appel réseau.",
+  "cases": [
+    {
+      "id": "mock_utm_single_parcel",
+      "source": "app.ocr.MOCK_OCR_TEXT",
+      "ocr_text": "PLAN TOPOGRAPHIQUE - MOCK OCR\nParcelle A\nSurface déclarée: 05a 49ca\nCoordonnées détectées:\nP1 403825.84 707630.38\nP2 403836.57 707626.36\nP3 403840.12 707641.10\nP4 403829.20 707645.42",
+      "expected_parcels": [
+        {
+          "label": "Parcelle A",
+          "declared_surface_m2": 549,
+          "points": [
+            {"label": "P1", "x": 403825.84, "y": 707630.38},
+            {"label": "P2", "x": 403836.57, "y": 707626.36},
+            {"label": "P3", "x": 403840.12, "y": 707641.10},
+            {"label": "P4", "x": 403829.20, "y": 707645.42}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini_style_multi_parcel",
+      "source": "synthetic_gemini_output",
+      "ocr_text": "Parcelle 1\nB1 380557.07 747662.20\nB2 380575.18 747658.74\nB3 380581.41 747685.16\nB4 380561.02 747690.55\nSURFACE: 12a 48ca\n\nParcelle 2\nB1: X=380612,50 Y=747700,25\nB2: X=380630,75 Y=747699,10\nB3: X=380633,80 Y=747724,45\nB4: X=380611,35 Y=747726,00\nSuperficie: 04a 82ca",
+      "expected_parcels": [
+        {
+          "label": "Parcelle 1",
+          "declared_surface_m2": 1248,
+          "points": [
+            {"label": "B1", "x": 380557.07, "y": 747662.20},
+            {"label": "B2", "x": 380575.18, "y": 747658.74},
+            {"label": "B3", "x": 380581.41, "y": 747685.16},
+            {"label": "B4", "x": 380561.02, "y": 747690.55}
+          ]
+        },
+        {
+          "label": "Parcelle 2",
+          "declared_surface_m2": 482,
+          "points": [
+            {"label": "B1", "x": 380612.50, "y": 747700.25},
+            {"label": "B2", "x": 380630.75, "y": 747699.10},
+            {"label": "B3", "x": 380633.80, "y": 747724.45},
+            {"label": "B4", "x": 380611.35, "y": 747726.00}
+          ]
+        }
+      ]
+    }
+  ]
+}
