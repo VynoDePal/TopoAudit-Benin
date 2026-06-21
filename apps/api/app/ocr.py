@@ -151,10 +151,18 @@ def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> st
     if not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
 
+    # Prompt strict : on force une sortie LIGNE-À-LIGNE directement parsable par
+    # extract_parcels_from_ocr_text (`LABEL X Y`, en-tête `Parcelle <n>`, `SURFACE: ...`),
+    # robuste aux modèles verbeux (gemma-4-31b ajoute du préambule, ignoré par le parser
+    # tant que les lignes de bornes restent au format attendu).
     prompt = (
-        "Extract all readable land survey OCR text from this document. "
-        "Focus on UTM zone 31N coordinates, parcel point labels, and declared surfaces. "
-        "Return plain text only, preserving coordinate tables and surface values."
+        "Tu es un OCR de plans topographiques (Bénin). Lis la ou les tables de coordonnées "
+        "(colonnes Borne/X/Y) et la surface déclarée (ha/a/ca). "
+        "Réponds UNIQUEMENT par des lignes de données, SANS préambule, commentaire, markdown "
+        "ni raisonnement. Une ligne par borne au format EXACT `LABEL X Y` (X et Y = nombres "
+        "UTM zone 31N séparés par un espace, ex. `B1 380553.47 747683.20`). Si le plan contient "
+        "plusieurs parcelles, précède chaque groupe de bornes d'une ligne `Parcelle <n>` et "
+        "termine chaque parcelle par une ligne `SURFACE: <valeur ha/a/ca>`. Aucune autre ligne."
     )
     payload = {
         "contents": [
@@ -175,7 +183,10 @@ def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> st
     headers = {"x-goog-api-key": settings.gemini_api_key}
 
     try:
-        with httpx.Client(timeout=60.0) as client:
+        # Timeout large : gemma-4-31b (modèle « raisonnant », multimodal) met
+        # couramment 30-60 s+ sur un scan ; 60 s était trop juste → ReadTimeout
+        # intermittent (« service unavailable ») à l'upload.
+        with httpx.Client(timeout=180.0) as client:
             response = client.post(_gemini_generate_url(), headers=headers, json=payload)
             response.raise_for_status()
             return _extract_gemini_text(response.json())

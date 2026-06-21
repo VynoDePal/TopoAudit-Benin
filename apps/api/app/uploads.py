@@ -112,7 +112,19 @@ def extract_parcels_from_ocr_text(ocr_text: str) -> list[ExtractedParcel]:
         current_points.append(point)
 
     flush()
-    return parcels
+    # Dédup : un modèle OCR verbeux (ex. gemma-4-31b) peut re-lister les mêmes bornes
+    # (préambule de raisonnement + réponse finale) → parcelles dupliquées. On élimine
+    # celles dont le jeu de points (label + coords arrondies) est identique à une
+    # précédente — robuste même si un en-tête « Parcelle » sépare les échos.
+    unique: list[ExtractedParcel] = []
+    seen: set[tuple] = set()
+    for parcel in parcels:
+        signature = tuple(sorted((p.label, round(p.x, 1), round(p.y, 1)) for p in parcel.points))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique.append(parcel)
+    return unique
 
 
 def _insert_extracted_parcels(
