@@ -23,6 +23,15 @@ import {
 const MONO = "'IBM Plex Mono', monospace";
 type S = Record<string, string>;
 
+// Réponse d'audit du backend (source de vérité, identique au PDF).
+type AuditApiResponse = {
+  extraction_score: number;
+  technical_score: number;
+  risk_level: string;
+  warnings: string[];
+  parcels: { label: string; declared_surface_m2: number | null; calculated_surface_m2: number | null; technical_score: number; risk_level: string; warnings: string[] }[];
+};
+
 // ---- carte SVG (porté de buildMap) ----
 function buildMap(t: Theme, parcels: Parcel[], sat: boolean) {
   const all: [number, number, string][] = [];
@@ -111,6 +120,7 @@ export default function TopoAuditDashboard() {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState<null | "ocr" | "audit" | "export">(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [auditResult, setAuditResult] = useState<AuditApiResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const t = THEMES[themeKey];
@@ -119,6 +129,8 @@ export default function TopoAuditDashboard() {
   // Aperçu de l'image uploadée (visualiseur de scan) ; révoqué au changement/démontage.
   const filePreview = useMemo(() => (file && file.type.startsWith("image/") ? URL.createObjectURL(file) : null), [file]);
   useEffect(() => () => { if (filePreview) URL.revokeObjectURL(filePreview); }, [filePreview]);
+  // Toute (re)définition des parcelles (upload, édition) invalide l'audit affiché.
+  useEffect(() => { setAuditResult(null); }, [parcels]);
 
   // ---- couche API (backend FastAPI réel) ----
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
@@ -186,7 +198,8 @@ export default function TopoAuditDashboard() {
     try {
       await apiJson("PUT", `/projects/${projectId}/parcels`, { parcels: mapToApi(parcels) });
       await apiJson("POST", `/projects/${projectId}/validate`, {});
-      await apiJson("POST", `/projects/${projectId}/audit`, {});
+      const audit = (await apiJson("POST", `/projects/${projectId}/audit`, {})) as AuditApiResponse;
+      setAuditResult(audit); // affichage = résultat backend (cohérent avec le PDF)
       setStage("audit");
     } catch (e) {
       setErrorMsg((lang === "fr" ? "Échec audit : " : "Audit failed: ") + (e instanceof Error ? e.message : String(e)).slice(0, 160));
@@ -406,6 +419,36 @@ export default function TopoAuditDashboard() {
 
     return { stepList, detection, themeList, parcelTabs, active, statusMsg, allConfirmed, audit, findings, reportSegs, map, today };
   }, [stage, themeKey, lang, activeIdx, mapSat, parcels, file, projectId, t, s]);
+
+  // Audit AFFICHÉ : résultat du backend si disponible (= la source du PDF, donc cohérent),
+  // sinon le calcul client (mode démo sans projet). Les scores backend remplacent les
+  // scores client (le score d'extraction client = moyenne des confidences, nulle sur
+  // l'OCR réel → toujours bas). Le détail par parcelle (géométrie) reste cohérent.
+  const auditView = useMemo(() => {
+    if (!auditResult) return view.audit;
+    const ar = auditResult;
+    const C = 2 * Math.PI * 32;
+    const sc = (n: number) => (n >= 85 ? t.low : n >= 65 ? t.mod : t.high);
+    const riskMap: Record<string, { l: string; c: string; soft: string; h: string }> = {
+      low: { l: s.risk_low, c: t.low, soft: t.lowSoft, h: s.hint_low },
+      moderate: { l: s.risk_mod, c: t.mod, soft: t.modSoft, h: s.hint_mod },
+      high: { l: s.risk_high, c: t.high, soft: t.highSoft, h: s.hint_high },
+    };
+    const rk = riskMap[ar.risk_level] ?? { l: s.risk_ins, c: t.faint, soft: t.panel2, h: s.hint_ins };
+    return {
+      ...view.audit,
+      ocrScore: ar.extraction_score,
+      techScore: ar.technical_score,
+      ocrColor: sc(ar.extraction_score),
+      techColor: sc(ar.technical_score),
+      ocrDash: `${((C * ar.extraction_score) / 100).toFixed(1)} ${C.toFixed(1)}`,
+      techDash: `${((C * ar.technical_score) / 100).toFixed(1)} ${C.toFixed(1)}`,
+      riskLabel: rk.l,
+      riskColor: rk.c,
+      riskSoft: rk.soft,
+      riskHint: rk.h,
+    };
+  }, [auditResult, view.audit, t, s]);
 
   // ---- styles réutilisables ----
   const panelCard: CSSProperties = { background: t.panel, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.shadow };
@@ -667,7 +710,7 @@ export default function TopoAuditDashboard() {
                   <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: t.sub, maxWidth: 680 }}>{s.audit_sub}</p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.2fr", gap: 16, marginBottom: 16 }}>
-                  {[{ label: s.score_ocr, score: view.audit.ocrScore, color: view.audit.ocrColor, dash: view.audit.ocrDash }, { label: s.score_tech, score: view.audit.techScore, color: view.audit.techColor, dash: view.audit.techDash }].map((g, i) => (
+                  {[{ label: s.score_ocr, score: auditView.ocrScore, color: auditView.ocrColor, dash: auditView.ocrDash }, { label: s.score_tech, score: auditView.techScore, color: auditView.techColor, dash: auditView.techDash }].map((g, i) => (
                     <div key={i} style={{ ...panelCard, padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
                       <svg width="76" height="76" viewBox="0 0 76 76">
                         <circle cx="38" cy="38" r="32" fill="none" stroke={t.line} strokeWidth="7" />
@@ -679,17 +722,17 @@ export default function TopoAuditDashboard() {
                       </div>
                     </div>
                   ))}
-                  <div style={{ background: view.audit.riskSoft, border: `1px solid ${view.audit.riskColor}`, borderRadius: 16, padding: 20, boxShadow: t.shadow, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
-                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", color: view.audit.riskColor, fontWeight: 600 }}>{s.risk}</div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: view.audit.riskColor, letterSpacing: "-.01em" }}>{view.audit.riskLabel}</div>
-                    <div style={{ fontSize: 12, color: t.ink, opacity: 0.7 }}>{view.audit.riskHint}</div>
+                  <div style={{ background: auditView.riskSoft, border: `1px solid ${auditView.riskColor}`, borderRadius: 16, padding: 20, boxShadow: t.shadow, display: "flex", flexDirection: "column", justifyContent: "center", gap: 6 }}>
+                    <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", color: auditView.riskColor, fontWeight: 600 }}>{s.risk}</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: auditView.riskColor, letterSpacing: "-.01em" }}>{auditView.riskLabel}</div>
+                    <div style={{ fontSize: 12, color: t.ink, opacity: 0.7 }}>{auditView.riskHint}</div>
                   </div>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
                   <section style={{ ...panelCard, padding: 18 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{s.per_parcel}</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                      {view.audit.parcels.map((p, i) => (
+                      {auditView.parcels.map((p, i) => (
                         <div key={i} style={{ border: `1px solid ${t.line}`, borderRadius: 12, padding: 13, background: t.panel2 }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
                             <span style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</span>
@@ -773,9 +816,9 @@ export default function TopoAuditDashboard() {
                   <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <div style={{ ...panelCard, padding: 18 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                        <div style={{ flex: 1 }}><div style={{ fontSize: 11, textTransform: "uppercase", color: t.faint, letterSpacing: ".05em" }}>{s.score_ocr}</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: MONO }}>{view.audit.ocrScore}<span style={{ fontSize: 13, color: t.faint }}>/100</span></div></div>
-                        <div style={{ flex: 1 }}><div style={{ fontSize: 11, textTransform: "uppercase", color: t.faint, letterSpacing: ".05em" }}>{s.score_tech}</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: MONO }}>{view.audit.techScore}<span style={{ fontSize: 13, color: t.faint }}>/100</span></div></div>
-                        <div style={{ flex: "none", fontSize: 13, fontWeight: 700, padding: "7px 13px", borderRadius: 9, background: view.audit.riskSoft, color: view.audit.riskColor, border: `1px solid ${view.audit.riskColor}` }}>{view.audit.riskLabel}</div>
+                        <div style={{ flex: 1 }}><div style={{ fontSize: 11, textTransform: "uppercase", color: t.faint, letterSpacing: ".05em" }}>{s.score_ocr}</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: MONO }}>{auditView.ocrScore}<span style={{ fontSize: 13, color: t.faint }}>/100</span></div></div>
+                        <div style={{ flex: 1 }}><div style={{ fontSize: 11, textTransform: "uppercase", color: t.faint, letterSpacing: ".05em" }}>{s.score_tech}</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: MONO }}>{auditView.techScore}<span style={{ fontSize: 13, color: t.faint }}>/100</span></div></div>
+                        <div style={{ flex: "none", fontSize: 13, fontWeight: 700, padding: "7px 13px", borderRadius: 9, background: auditView.riskSoft, color: auditView.riskColor, border: `1px solid ${auditView.riskColor}` }}>{auditView.riskLabel}</div>
                       </div>
                       <div style={{ fontSize: 13, fontWeight: 600, margin: "6px 0 9px" }}>{s.seg_table}</div>
                       <table style={{ width: "100%", borderCollapse: "collapse" }}>
