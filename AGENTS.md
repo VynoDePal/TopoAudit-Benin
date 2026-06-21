@@ -19,6 +19,9 @@
 
 
 - Frontend MapLibre integration lives in `apps/web/app/components/ParcelMap.tsx`; it must remain client-side (`"use client"` / dynamic import with `ssr: false`) because MapLibre depends on browser APIs.
+- Audit scoring must preserve the historical risk mapping: invalid geometry => high/35, low surface delta => low/92 even with low extraction score, high surface delta => high/48. Extraction score may be dynamic when OCR point confidence is persisted, but missing confidence keeps the legacy 87 fallback to avoid breaking report/workflow fixtures.
+- When both parcel-derived audit data and project-level `audit_inputs` exist, keep the historical project-level fallback unless parcel inputs contain real dynamic metrics (`calculated_surface_m2` or OCR point confidence). This prevents regressions in legacy E2E/report fixtures that still seed `audit_inputs` while parcel rows may also exist.
+
 
 - OCR validation frontend helpers now live in `apps/web/app/components/ocrValidationShared.ts`; reuse this module for API base URL, CRS options, OCR sample data, fetch helper, and parcel feature creation instead of duplicating logic across pages/components.
 - `apps/web/app/components/OcrValidationInterface.tsx` centralizes form-dirty reset behavior via shared helpers (`invalidateConfirmation` / `updatePoints`) to avoid DRY gate failures when editing coordinates/CRS.
