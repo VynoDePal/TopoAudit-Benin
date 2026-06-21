@@ -245,6 +245,36 @@ def test_audit_scores_each_extracted_parcel_independently_and_aggregates_worst_r
     assert "Parcelle B" in payload["warnings"][1]
 
 
+def test_audit_computes_extraction_score_from_extracted_data_quality():
+    parcel_rows = [
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "declared_surface_m2": 176,
+            "detected_crs": "EPSG:32631",
+            "source_x": x,
+            "source_y": y,
+            "confidence": confidence,
+        }
+        for x, y, confidence in [
+            (403825.84, 707630.38, 0.5),
+            (403836.57, 707626.36, 0.5),
+            (403840.12, 707641.10, 0.5),
+            (403829.20, 707645.42, 0.5),
+        ]
+    ]
+    session = FakeWorkflowSession(status="VALIDATED", parcel_rows=parcel_rows)
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/audit")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["extraction_score"] == 85
+    assert payload["parcels"][0]["extraction_score"] == 85
+
+
 def test_audit_marks_parcel_without_enough_points_as_invalid_geometry():
     parcel_rows = [
         {
