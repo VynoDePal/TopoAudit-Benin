@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +10,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.crs import GEOJSON_CRS, SUPPORTED_SOURCE_CRS, transform_coordinates_to_wgs84
+from app.crs import (
+    GEOJSON_CRS,
+    SUPPORTED_SOURCE_CRS,
+    transform_coordinate_to_wgs84,
+    transform_coordinates_to_wgs84,
+)
 from app.database import get_db, get_engine
 from app.geometry_engine import PolygonValidationResult, validate_polygon
 from app.models import Base, Project
@@ -20,6 +27,7 @@ from app.workflow import (
     AuditResponse,
     ProjectValidationResponse,
     ProjectWorkflowResponse,
+    _ensure_project_exists,
     create_project_audit,
     ensure_audit_inputs_table,
     get_project_state,
@@ -168,6 +176,113 @@ def upload_project_document(
 def get_project_workflow(project_id: str, db: Session = Depends(get_db)) -> ProjectWorkflowResponse:
     state = get_project_state(project_id, db)
     return ProjectWorkflowResponse(project_id=project_id, state=state)
+
+
+class ParcelPointIO(BaseModel):
+    label: str
+    x: float
+    y: float
+    confidence: float | None = None
+
+
+class ParcelIO(BaseModel):
+    id: str | None = None
+    label: str
+    declared_surface_m2: float | None = None
+    detected_crs: str = "EPSG:32631"
+    points: list[ParcelPointIO] = Field(default_factory=list)
+
+
+class ParcelsResponse(BaseModel):
+    parcels: list[ParcelIO]
+
+
+def _read_project_parcels(project_id: str, db: Session) -> ParcelsResponse:
+    _ensure_project_exists(project_id, db)
+    rows = (
+        db.execute(
+            text(
+                """
+                SELECT p.id AS parcel_id, p.label AS label, p.declared_surface_m2 AS declared_surface_m2,
+                       p.detected_crs AS detected_crs, sp.label AS point_label,
+                       sp.source_x AS x, sp.source_y AS y, sp.confidence AS confidence
+                FROM parcels p
+                LEFT JOIN survey_points sp ON sp.parcel_id = p.id
+                WHERE p.project_id = :project_id
+                ORDER BY p.created_at, p.id, sp.point_index
+                """
+            ),
+            {"project_id": project_id},
+        )
+        .mappings()
+        .all()
+    )
+    ordered: list[str] = []
+    by_id: dict[str, ParcelIO] = {}
+    for row in rows:
+        pid = str(row["parcel_id"])
+        if pid not in by_id:
+            by_id[pid] = ParcelIO(
+                id=pid,
+                label=str(row["label"]),
+                declared_surface_m2=row["declared_surface_m2"],
+                detected_crs=str(row["detected_crs"] or "EPSG:32631"),
+                points=[],
+            )
+            ordered.append(pid)
+        if row["point_label"] is not None and row["x"] is not None and row["y"] is not None:
+            by_id[pid].points.append(
+                ParcelPointIO(label=str(row["point_label"]), x=float(row["x"]), y=float(row["y"]), confidence=row["confidence"])
+            )
+    return ParcelsResponse(parcels=[by_id[pid] for pid in ordered])
+
+
+@app.get("/api/projects/{project_id}/parcels", response_model=ParcelsResponse, tags=["parcels"])
+def get_project_parcels(project_id: str, db: Session = Depends(get_db)) -> ParcelsResponse:
+    return _read_project_parcels(project_id, db)
+
+
+@app.put("/api/projects/{project_id}/parcels", response_model=ParcelsResponse, tags=["parcels"])
+def replace_project_parcels(
+    project_id: str,
+    payload: ParcelsResponse,
+    db: Session = Depends(get_db),
+) -> ParcelsResponse:
+    # Persiste les corrections humaines : on remplace les parcelles du projet par celles
+    # fournies (l'audit lit ces tables). geom WGS84 dérivé du CRS source de chaque parcelle.
+    _ensure_project_exists(project_id, db)
+    db.execute(text("DELETE FROM parcels WHERE project_id = :project_id"), {"project_id": project_id})
+    now = datetime.now(UTC)
+    for parcel in payload.parcels:
+        parcel_id = str(uuid4())
+        db.execute(
+            text(
+                """
+                INSERT INTO parcels (id, project_id, levee_id, label, declared_surface_m2, detected_crs, created_at)
+                VALUES (:id, :project_id, NULL, :label, :declared, :crs, :created_at)
+                """
+            ),
+            {"id": parcel_id, "project_id": project_id, "label": parcel.label, "declared": parcel.declared_surface_m2, "crs": parcel.detected_crs, "created_at": now},
+        )
+        for index, point in enumerate(parcel.points):
+            crs = parcel.detected_crs if parcel.detected_crs in ("EPSG:32631", "EPSG:4326") else "EPSG:32631"
+            try:
+                longitude, latitude = transform_coordinate_to_wgs84(point.x, point.y, crs)
+            except Exception:  # noqa: BLE001 — CRS local/inconnu : on stocke les coords brutes
+                longitude, latitude = point.x, point.y
+            db.execute(
+                text(
+                    """
+                    INSERT INTO survey_points
+                        (id, parcel_id, label, point_index, source_x, source_y, confidence, geom, created_at)
+                    VALUES (:id, :parcel_id, :label, :idx, :sx, :sy, :conf,
+                            ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :created_at)
+                    """
+                ),
+                {"id": str(uuid4()), "parcel_id": parcel_id, "label": point.label, "idx": index, "sx": point.x, "sy": point.y, "conf": point.confidence, "lon": longitude, "lat": latitude, "created_at": now},
+            )
+    db.commit()
+    return _read_project_parcels(project_id, db)
 
 
 class ProjectValidationRequest(BaseModel):

@@ -2,7 +2,7 @@
 
 // Dashboard TopoAudit Bénin — port fidèle de design/TopoAudit Bénin.dc.html
 // (top bar + sidebar workflow + 4 étapes intake→validate→audit→report, 3 thèmes, FR/EN).
-import { CSSProperties, useMemo, useState } from "react";
+import { CSSProperties, useMemo, useRef, useState } from "react";
 
 import {
   confTone,
@@ -106,8 +106,114 @@ export default function TopoAuditDashboard() {
   const [notes, setNotes] = useState("Avant achat");
   const [parcels, setParcels] = useState<Parcel[]>(DEFAULT_PARCELS);
 
+  // Câblage backend : projet réel + fichier uploadé + états async.
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState<null | "ocr" | "audit" | "export">(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const t = THEMES[themeKey];
   const s: S = STR[lang];
+
+  // ---- couche API (backend FastAPI réel) ----
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
+  const apiJson = async (method: string, path: string, body?: unknown) => {
+    const res = await fetch(`${apiBaseUrl}${path}`, {
+      method,
+      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new Error((await res.text().catch(() => "")) || `${method} ${path} → ${res.status}`);
+    return res.json();
+  };
+  const mapFromApi = (apiParcels: any[]): Parcel[] =>
+    apiParcels.map((p, i) => ({
+      id: p.id ?? `p${i + 1}`,
+      name: p.label ?? `Parcelle ${i + 1}`,
+      declaredRaw: "",
+      declaredM2: p.declared_surface_m2 != null ? String(p.declared_surface_m2) : "",
+      crs: p.detected_crs ?? "EPSG:32631",
+      confirmed: false,
+      points: (p.points ?? []).map((pt: any) => ({ label: pt.label, x: String(pt.x), y: String(pt.y), confidence: pt.confidence ?? 0 })),
+    }));
+  const mapToApi = (list: Parcel[]) =>
+    list.map((p) => ({
+      label: p.name,
+      declared_surface_m2: Number.isFinite(num(p.declaredM2)) ? num(p.declaredM2) : null,
+      detected_crs: p.crs,
+      points: p.points.map((pt) => ({ label: pt.label, x: num(pt.x), y: num(pt.y), confidence: pt.confidence })),
+    }));
+
+  // Intake → OCR réel : crée le projet, uploade le plan (OCR gemma), récupère les bornes.
+  const runOcr = async () => {
+    setErrorMsg(null);
+    if (!file) { setStage("validate"); return; } // mode démo (sans fichier)
+    setBusy("ocr");
+    try {
+      const proj = await apiJson("POST", "/projects", { name: projectName || "Audit" });
+      setProjectId(proj.id);
+      const form = new FormData();
+      form.append("file", file);
+      const up = await fetch(`${apiBaseUrl}/projects/${proj.id}/documents`, { method: "POST", body: form });
+      if (!up.ok) throw new Error((await up.text().catch(() => "")) || `Upload → ${up.status}`);
+      const data = await apiJson("GET", `/projects/${proj.id}/parcels`);
+      const mapped = mapFromApi(data.parcels ?? []);
+      if (mapped.length) {
+        setParcels(mapped);
+        setActiveIdx(0);
+      } else {
+        setErrorMsg(lang === "fr" ? "OCR : aucune borne extraite — corrigez/ajoutez manuellement." : "OCR: no corner extracted — correct/add manually.");
+      }
+      setStage("validate");
+    } catch (e) {
+      setErrorMsg((lang === "fr" ? "Échec OCR : " : "OCR failed: ") + (e instanceof Error ? e.message : String(e)).slice(0, 160));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Validate → Audit réel : sauvegarde les corrections, transite, lance l'audit backend.
+  const runAudit = async (allConfirmed: boolean) => {
+    if (!allConfirmed) return;
+    setErrorMsg(null);
+    if (!projectId) { setStage("audit"); return; } // mode démo
+    setBusy("audit");
+    try {
+      await apiJson("PUT", `/projects/${projectId}/parcels`, { parcels: mapToApi(parcels) });
+      await apiJson("POST", `/projects/${projectId}/validate`, {});
+      await apiJson("POST", `/projects/${projectId}/audit`, {});
+      setStage("audit");
+    } catch (e) {
+      setErrorMsg((lang === "fr" ? "Échec audit : " : "Audit failed: ") + (e instanceof Error ? e.message : String(e)).slice(0, 160));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Report → PDF réel (backend WeasyPrint) ou impression (mode démo).
+  const exportReport = async () => {
+    setErrorMsg(null);
+    if (!projectId) { if (typeof window !== "undefined") window.print(); return; }
+    setBusy("export");
+    try {
+      const res = await fetch(`${apiBaseUrl}/projects/${projectId}/audit/report.pdf`, { method: "POST" });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `PDF → ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `topoaudit-${projectId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErrorMsg((lang === "fr" ? "Échec export : " : "Export failed: ") + (e instanceof Error ? e.message : String(e)).slice(0, 160));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   // ---- mutators ----
   const updatePoint = (pIdx: number, rIdx: number, field: keyof Parcel["points"][number], val: string) =>
@@ -389,14 +495,15 @@ export default function TopoAuditDashboard() {
                     </div>
                   </section>
                   <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                    <div style={{ background: t.panel, border: `1.5px dashed ${t.accent}`, borderRadius: 16, padding: 22, textAlign: "center", boxShadow: t.shadow }}>
+                    <div onClick={() => fileInputRef.current?.click()} role="button" tabIndex={0} style={{ background: t.panel, border: `1.5px dashed ${t.accent}`, borderRadius: 16, padding: 22, textAlign: "center", boxShadow: t.shadow, cursor: "pointer" }}>
+                      <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,application/pdf" style={{ display: "none" }} onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
                       <div style={{ width: 46, height: 46, borderRadius: 12, background: t.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 11px" }}>
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4L7 9M12 4L17 9" stroke={t.accent} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /><path d="M4 16V19A1 1 0 0 0 5 20H19A1 1 0 0 0 20 19V16" stroke={t.accent} strokeWidth="1.7" strokeLinecap="round" /></svg>
                       </div>
                       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{s.drop_title}</div>
                       <div style={{ fontSize: 12, color: t.sub }}>{s.drop_hint}</div>
                       <div style={{ marginTop: 13, display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 12px", background: t.panel2, border: `1px solid ${t.line}`, borderRadius: 8, fontSize: 12, fontFamily: MONO }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: t.accent }} />plan_calavi_lot12.pdf · 2 {s.pages}
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: file ? t.low : t.accent }} />{file ? file.name : `plan_calavi_lot12.pdf · 2 ${s.pages}`}
                       </div>
                     </div>
                     <div style={{ ...panelCard, padding: 18 }}>
@@ -412,8 +519,9 @@ export default function TopoAuditDashboard() {
                     </div>
                   </section>
                 </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
-                  <button onClick={() => setStage("validate")} style={{ display: "inline-flex", alignItems: "center", gap: 9, background: t.accent, color: t.accentInk, border: "none", borderRadius: 11, padding: "12px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", boxShadow: t.shadow }}>{s.btn_ocr}{arrow}</button>
+                <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 14, marginTop: 20 }}>
+                  {errorMsg && <span style={{ fontSize: 12.5, color: t.high }}>{errorMsg}</span>}
+                  <button onClick={runOcr} disabled={busy === "ocr"} style={{ display: "inline-flex", alignItems: "center", gap: 9, background: t.accent, color: t.accentInk, border: "none", borderRadius: 11, padding: "12px 20px", fontSize: 14, fontWeight: 600, cursor: busy === "ocr" ? "wait" : "pointer", opacity: busy === "ocr" ? 0.7 : 1, boxShadow: t.shadow }}>{busy === "ocr" ? (lang === "fr" ? "Extraction OCR…" : "Running OCR…") : s.btn_ocr}{busy === "ocr" ? null : arrow}</button>
                 </div>
               </div>
             )}
@@ -520,9 +628,9 @@ export default function TopoAuditDashboard() {
                       </div>
                     )}
                     <div style={{ display: "flex", gap: 11, justifyContent: "flex-end", alignItems: "center" }}>
-                      <span style={{ fontSize: 12, color: t.sub, marginRight: "auto" }}>{view.statusMsg}</span>
+                      <span style={{ fontSize: 12, color: errorMsg ? t.high : t.sub, marginRight: "auto" }}>{errorMsg || view.statusMsg}</span>
                       <button onClick={() => confirmParcel(activeIdx)} style={{ border: `1px solid ${view.active.confirmBorder}`, background: view.active.confirmBg, color: view.active.confirmFg, borderRadius: 10, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>{view.active.confirmLabel}</button>
-                      <button onClick={() => { if (view.allConfirmed) setStage("audit"); }} style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "none", background: view.allConfirmed ? t.accent : t.panel2, color: view.allConfirmed ? t.accentInk : t.faint, borderRadius: 10, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: view.allConfirmed ? "pointer" : "not-allowed", opacity: view.allConfirmed ? 1 : 0.6 }}>{s.btn_audit}{arrow}</button>
+                      <button onClick={() => runAudit(view.allConfirmed)} disabled={!view.allConfirmed || busy === "audit"} style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "none", background: view.allConfirmed ? t.accent : t.panel2, color: view.allConfirmed ? t.accentInk : t.faint, borderRadius: 10, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: view.allConfirmed ? (busy === "audit" ? "wait" : "pointer") : "not-allowed", opacity: view.allConfirmed ? (busy === "audit" ? 0.7 : 1) : 0.6 }}>{busy === "audit" ? (lang === "fr" ? "Audit…" : "Auditing…") : s.btn_audit}{busy === "audit" ? null : arrow}</button>
                     </div>
                   </section>
                 </div>
@@ -609,8 +717,8 @@ export default function TopoAuditDashboard() {
                     <h1 style={{ margin: "0 0 6px", fontSize: 26, fontWeight: 700, letterSpacing: "-.015em" }}>{s.report_title}</h1>
                     <p style={{ margin: 0, fontSize: 13.5, color: t.sub }}>{s.generated} {view.today} · {s.file} plan_calavi_lot12.pdf</p>
                   </div>
-                  <button onClick={() => { if (typeof window !== "undefined") window.print(); }} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: t.accent, color: t.accentInk, border: "none", borderRadius: 11, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", flex: "none", boxShadow: t.shadow }}>
-                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /><path d="M3 11V13A1 1 0 0 0 4 14H12A1 1 0 0 0 13 13V11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>{s.export_pdf}
+                  <button onClick={exportReport} disabled={busy === "export"} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: t.accent, color: t.accentInk, border: "none", borderRadius: 11, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: busy === "export" ? "wait" : "pointer", opacity: busy === "export" ? 0.7 : 1, flex: "none", boxShadow: t.shadow }}>
+                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /><path d="M3 11V13A1 1 0 0 0 4 14H12A1 1 0 0 0 13 13V11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>{busy === "export" ? (lang === "fr" ? "Export…" : "Exporting…") : s.export_pdf}
                   </button>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1.15fr 1fr", gap: 18, alignItems: "start" }}>
