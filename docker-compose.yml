@@ -26,6 +26,8 @@ services:
       LOCAL_STORAGE_PATH: /data/uploads
       OCR_PROVIDER: gemini
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_API_ENDPOINT: ${GEMINI_API_ENDPOINT:-https://generativelanguage.googleapis.com/v1beta}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemma-4-31b-it}
     depends_on:
       db:
         condition: service_healthy
