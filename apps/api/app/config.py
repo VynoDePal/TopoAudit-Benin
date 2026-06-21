@@ -1,12 +1,14 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_env: str = "local"
     app_name: str = "TopoAudit Benin"
-    database_url: str = "postgresql+psycopg://topoaudit:topoaudit@localhost:5432/topoaudit"
+    database_url: str = "postgresql+psycopg://localhost:5432/topoaudit"
     frontend_url: str = "http://localhost:3000"
     local_storage_path: str = "/data/uploads"
+    max_upload_mb: int = Field(default=25, gt=0)
     ocr_provider: str = "mock"
     azure_document_intelligence_endpoint: str = ""
     azure_document_intelligence_key: str = ""
