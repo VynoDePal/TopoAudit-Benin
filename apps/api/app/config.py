@@ -1,5 +1,7 @@
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.logging_security import install_sensitive_data_filter, register_secrets
 
 
 class Settings(BaseSettings):
@@ -20,6 +22,17 @@ class Settings(BaseSettings):
     ocr_rate_limit_per_minute: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @model_validator(mode="after")
+    def register_configured_secrets_for_log_redaction(self) -> "Settings":
+        register_secrets(
+            [
+                self.azure_document_intelligence_key,
+                self.gemini_api_key,
+            ]
+        )
+        install_sensitive_data_filter()
+        return self
 
 
 settings = Settings()
