@@ -17,7 +17,7 @@ from app.ocr import extract_text_from_document
 from app.surface_parser import parse_surface_to_m2
 from app.workflow import mark_project_ocr_extracted, mark_project_uploaded
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+BYTES_PER_MB = 1024 * 1024
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -242,6 +242,10 @@ def _extension_for_upload(file: UploadFile) -> str:
     return extension
 
 
+def _max_upload_bytes() -> int:
+    return settings.max_upload_mb * BYTES_PER_MB
+
+
 def _content_matches_mime(content_type: str, first_chunk: bytes) -> bool:
     if content_type == "image/jpeg":
         return first_chunk.startswith(b"\xff\xd8\xff")
@@ -290,13 +294,13 @@ def _store_upload(project_id: str, file: UploadFile) -> tuple[str, int, str]:
                         )
 
                 size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
+                if size > _max_upload_bytes():
                     # 413 en littéral : la constante starlette a été renommée selon les
                     # versions (HTTP_413_CONTENT_TOO_LARGE vs _REQUEST_ENTITY_TOO_LARGE) —
                     # l'entier est insensible à la version installée.
                     raise HTTPException(
                         status_code=413,
-                        detail="File exceeds the 25 MB limit",
+                        detail=f"File exceeds the {settings.max_upload_mb} MB limit",
                     )
 
                 digest.update(chunk)
