@@ -2,7 +2,7 @@
 
 // Dashboard TopoAudit Bénin — port fidèle de design/TopoAudit Bénin.dc.html
 // (top bar + sidebar workflow + 4 étapes intake→validate→audit→report, 3 thèmes, FR/EN).
-import { CSSProperties, useMemo, useRef, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   confTone,
@@ -115,6 +115,10 @@ export default function TopoAuditDashboard() {
 
   const t = THEMES[themeKey];
   const s: S = STR[lang];
+
+  // Aperçu de l'image uploadée (visualiseur de scan) ; révoqué au changement/démontage.
+  const filePreview = useMemo(() => (file && file.type.startsWith("image/") ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => { if (filePreview) URL.revokeObjectURL(filePreview); }, [filePreview]);
 
   // ---- couche API (backend FastAPI réel) ----
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
@@ -257,13 +261,25 @@ export default function TopoAuditDashboard() {
       return { ...st, active, done, numBg: active ? t.accent : t.panel2, numFg: active ? t.accentInk : t.sub, numBorder: active ? t.accent : t.line, bg: active ? t.accentSoft : "transparent", border: active ? t.accent : "transparent" };
     });
 
-    const detection = [
-      { label: s.d_title, value: "Titre N° 4521/AC", mono: "inherit" },
-      { label: s.d_surface, value: "05a 49ca · 02a 08ca", mono: MONO },
-      { label: s.d_scale, value: "1/500", mono: MONO },
-      { label: s.d_geo, value: "WGS 84 / UTM 31N", mono: "inherit" },
-      { label: s.d_crs, value: "EPSG:32631", mono: MONO },
-    ];
+    const fmtSize = (b: number) => (b < 1024 * 1024 ? `${Math.round(b / 1024)} Ko` : `${(b / 1024 / 1024).toFixed(1)} Mo`);
+    const totalBornes = parcels.reduce((n, p) => n + p.points.length, 0);
+    const detection = file
+      ? [
+          { label: s.d_file, value: file.name, mono: "inherit" },
+          { label: s.d_type, value: (file.type || "—").replace(/^(application|image)\//, "").toUpperCase(), mono: MONO },
+          { label: s.d_size, value: fmtSize(file.size), mono: MONO },
+          ...(projectId
+            ? [
+                { label: s.d_parcels, value: String(parcels.length), mono: MONO },
+                { label: s.d_bornes_total, value: String(totalBornes), mono: MONO },
+              ]
+            : [{ label: s.d_crs, value: `EPSG:32631 · ${s.d_pending}`, mono: MONO }]),
+        ]
+      : [
+          { label: s.d_file, value: s.d_nofile, mono: "inherit" },
+          { label: s.d_geo, value: "WGS 84 / UTM 31N", mono: "inherit" },
+          { label: s.d_crs, value: "EPSG:32631", mono: MONO },
+        ];
 
     const themeList = (Object.keys(THEMES) as ThemeKey[]).map((k) => {
       const th = THEMES[k];
@@ -389,7 +405,7 @@ export default function TopoAuditDashboard() {
     const today = new Date().toLocaleDateString(lang === "fr" ? "fr-FR" : "en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
     return { stepList, detection, themeList, parcelTabs, active, statusMsg, allConfirmed, audit, findings, reportSegs, map, today };
-  }, [stage, themeKey, lang, activeIdx, mapSat, parcels, t, s]);
+  }, [stage, themeKey, lang, activeIdx, mapSat, parcels, file, projectId, t, s]);
 
   // ---- styles réutilisables ----
   const panelCard: CSSProperties = { background: t.panel, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.shadow };
@@ -503,7 +519,7 @@ export default function TopoAuditDashboard() {
                       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{s.drop_title}</div>
                       <div style={{ fontSize: 12, color: t.sub }}>{s.drop_hint}</div>
                       <div style={{ marginTop: 13, display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 12px", background: t.panel2, border: `1px solid ${t.line}`, borderRadius: 8, fontSize: 12, fontFamily: MONO }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: file ? t.low : t.accent }} />{file ? file.name : `plan_calavi_lot12.pdf · 2 ${s.pages}`}
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: file ? t.low : t.accent }} />{file ? file.name : lang === "fr" ? "Cliquez pour choisir un plan" : "Click to choose a plan"}
                       </div>
                     </div>
                     <div style={{ ...panelCard, padding: 18 }}>
@@ -544,16 +560,21 @@ export default function TopoAuditDashboard() {
                       </div>
                     </div>
                     <div style={{ position: "relative", aspectRatio: "3/4", background: t.panel2, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg width="100%" height="100%" viewBox="0 0 300 400" preserveAspectRatio="xMidYMid slice" style={{ position: "absolute", inset: 0 }}>
-                        <defs><pattern id="scanhatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke={t.line} strokeWidth="3" /></pattern></defs>
-                        <rect width="300" height="400" fill="url(#scanhatch)" opacity="0.5" />
-                        <rect x="22" y="22" width="256" height="356" fill="none" stroke={t.sub} strokeWidth="1" opacity="0.4" />
-                        <rect x="34" y="40" width="150" height="9" fill={t.sub} opacity="0.3" />
-                        <rect x="34" y="56" width="96" height="6" fill={t.sub} opacity="0.2" />
-                        <polygon points="95,150 200,135 215,250 120,275 70,205" fill={t.accentSoft} stroke={t.accent} strokeWidth="1.6" />
-                        {[[95, 150], [200, 135], [215, 250], [120, 275], [70, 205]].map(([cx, cy], i) => (<circle key={i} cx={cx} cy={cy} r="3" fill={t.accent} />))}
-                      </svg>
-                      <div style={{ position: "absolute", left: 11, bottom: 11, fontFamily: MONO, fontSize: 10, color: t.sub, background: t.panel, padding: "3px 7px", borderRadius: 5, border: `1px solid ${t.line}` }}>{s.scan_ph}</div>
+                      {filePreview ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={filePreview} alt={file?.name ?? "scan"} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain", background: t.panel2 }} />
+                      ) : (
+                        <svg width="100%" height="100%" viewBox="0 0 300 400" preserveAspectRatio="xMidYMid slice" style={{ position: "absolute", inset: 0 }}>
+                          <defs><pattern id="scanhatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="7" stroke={t.line} strokeWidth="3" /></pattern></defs>
+                          <rect width="300" height="400" fill="url(#scanhatch)" opacity="0.5" />
+                          <rect x="22" y="22" width="256" height="356" fill="none" stroke={t.sub} strokeWidth="1" opacity="0.4" />
+                          <rect x="34" y="40" width="150" height="9" fill={t.sub} opacity="0.3" />
+                          <rect x="34" y="56" width="96" height="6" fill={t.sub} opacity="0.2" />
+                          <polygon points="95,150 200,135 215,250 120,275 70,205" fill={t.accentSoft} stroke={t.accent} strokeWidth="1.6" />
+                          {[[95, 150], [200, 135], [215, 250], [120, 275], [70, 205]].map(([cx, cy], i) => (<circle key={i} cx={cx} cy={cy} r="3" fill={t.accent} />))}
+                        </svg>
+                      )}
+                      <div style={{ position: "absolute", left: 11, bottom: 11, fontFamily: MONO, fontSize: 10, color: t.sub, background: t.panel, padding: "3px 7px", borderRadius: 5, border: `1px solid ${t.line}`, maxWidth: "calc(100% - 22px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file ? file.name : s.scan_ph}</div>
                     </div>
                   </section>
 
@@ -715,7 +736,7 @@ export default function TopoAuditDashboard() {
                   <div>
                     {eyebrow(`${s.step_label} 04 · ${s.nav_report}`)}
                     <h1 style={{ margin: "0 0 6px", fontSize: 26, fontWeight: 700, letterSpacing: "-.015em" }}>{s.report_title}</h1>
-                    <p style={{ margin: 0, fontSize: 13.5, color: t.sub }}>{s.generated} {view.today} · {s.file} plan_calavi_lot12.pdf</p>
+                    <p style={{ margin: 0, fontSize: 13.5, color: t.sub }}>{s.generated} {view.today} · {s.file} {file?.name ?? "—"}</p>
                   </div>
                   <button onClick={exportReport} disabled={busy === "export"} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: t.accent, color: t.accentInk, border: "none", borderRadius: 11, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: busy === "export" ? "wait" : "pointer", opacity: busy === "export" ? 0.7 : 1, flex: "none", boxShadow: t.shadow }}>
                     <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /><path d="M3 11V13A1 1 0 0 0 4 14H12A1 1 0 0 0 13 13V11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>{busy === "export" ? (lang === "fr" ? "Export…" : "Exporting…") : s.export_pdf}
