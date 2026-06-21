@@ -353,6 +353,119 @@
         "title": "ParcelAuditResult",
         "type": "object"
       },
+      "ParcelIO": {
+        "properties": {
+          "declared_surface_m2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Surface M2"
+          },
+          "detected_crs": {
+            "default": "EPSG:32631",
+            "title": "Detected Crs",
+            "type": "string"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/ParcelPointIO"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "ParcelIO",
+        "type": "object"
+      },
+      "ParcelPointIO": {
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "x",
+          "y"
+        ],
+        "title": "ParcelPointIO",
+        "type": "object"
+      },
+      "ParcelsResponse-Input": {
+        "properties": {
+          "parcels": {
+            "items": {
+              "$ref": "#/components/schemas/ParcelIO"
+            },
+            "title": "Parcels",
+            "type": "array"
+          }
+        },
+        "required": [
+          "parcels"
+        ],
+        "title": "ParcelsResponse",
+        "type": "object"
+      },
+      "ParcelsResponse-Output": {
+        "properties": {
+          "parcels": {
+            "items": {
+              "$ref": "#/components/schemas/ParcelIO"
+            },
+            "title": "Parcels",
+            "type": "array"
+          }
+        },
+        "required": [
+          "parcels"
+        ],
+        "title": "ParcelsResponse",
+        "type": "object"
+      },
       "PolygonValidationRequest": {
         "properties": {
           "coordinates": {
@@ -1150,6 +1263,98 @@
         "summary": "Run Document Ocr",
         "tags": [
           "ocr"
+        ]
+      }
+    },
+    "/api/projects/{project_id}/parcels": {
+      "get": {
+        "operationId": "get_project_parcels_api_projects__project_id__parcels_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParcelsResponse-Output"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Parcels",
+        "tags": [
+          "parcels"
+        ]
+      },
+      "put": {
+        "operationId": "replace_project_parcels_api_projects__project_id__parcels_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParcelsResponse-Input"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParcelsResponse-Output"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace Project Parcels",
+        "tags": [
+          "parcels"
         ]
       }
     },
