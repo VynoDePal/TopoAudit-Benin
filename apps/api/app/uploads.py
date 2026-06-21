@@ -110,7 +110,15 @@ def extract_parcels_from_ocr_text(ocr_text: str) -> list[ExtractedParcel]:
         if point is None:
             continue
 
-        if current_points and point.label in {existing.label for existing in current_points}:
+        existing = next((p for p in current_points if p.label == point.label), None)
+        if existing is not None:
+            # Même label déjà présent dans la parcelle courante : si les coordonnées sont
+            # ~identiques, c'est un ÉCHO (modèle vision verbeux qui re-liste les mêmes
+            # bornes lors de sa relecture) → on ignore (sinon le polygone est corrompu par
+            # des points dupliqués). Si les coordonnées diffèrent, c'est une nouvelle
+            # parcelle qui réutilise les labels (B1, B2, …) → on flush.
+            if abs(existing.x - point.x) <= 1.0 and abs(existing.y - point.y) <= 1.0:
+                continue
             flush()
         if current_label is None:
             current_label = f"Parcelle {len(parcels) + 1}"
@@ -183,13 +191,17 @@ def _insert_extracted_parcels(
                 "created_at": created_at,
             },
         )
-        for point in parcel.points:
+        # point_index = ordre du contour (= ordre de lecture de la table) : critique pour
+        # reconstruire un polygone NON auto-intersecté à l'audit (sans lui, le tri par
+        # label est alphabétique : B1, B10, B11, …, B2 → polygone en désordre → invalide).
+        for point_index, point in enumerate(parcel.points):
             longitude, latitude = transform_coordinate_to_wgs84(point.x, point.y)
             db.execute(
                 text(
                     """
-                    INSERT INTO survey_points (id, parcel_id, label, source_x, source_y, confidence, geom, created_at)
-                    VALUES (:id, :parcel_id, :label, :source_x, :source_y, :confidence,
+                    INSERT INTO survey_points
+                        (id, parcel_id, label, point_index, source_x, source_y, confidence, geom, created_at)
+                    VALUES (:id, :parcel_id, :label, :point_index, :source_x, :source_y, :confidence,
                             ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326), :created_at)
                     """
                 ),
@@ -197,6 +209,7 @@ def _insert_extracted_parcels(
                     "id": str(uuid4()),
                     "parcel_id": parcel_id,
                     "label": point.label,
+                    "point_index": point_index,
                     "source_x": point.x,
                     "source_y": point.y,
                     "longitude": longitude,

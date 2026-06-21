@@ -119,6 +119,9 @@ class SurveyPoint(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     parcel_id: Mapped[str] = mapped_column(ForeignKey("parcels.id", ondelete="CASCADE"), nullable=False)
     label: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Ordre du point dans le contour de la parcelle (0..n) : indispensable pour
+    # reconstruire un polygone simple à l'audit (le tri par label est alphabétique).
+    point_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_x: Mapped[float | None]
     source_y: Mapped[float | None]
     confidence: Mapped[float | None] = mapped_column(Float)
