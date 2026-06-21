@@ -34,7 +34,7 @@ La sortie attendue par TopoAudit est du texte brut. La validation humaine reste 
 OCR_PROVIDER=gemini
 GEMINI_API_KEY=
 GEMINI_API_ENDPOINT=https://generativelanguage.googleapis.com/v1beta
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemma-4-31b-it
 OCR_RATE_LIMIT_PER_MINUTE=10
 ```
 
@@ -42,7 +42,7 @@ Notes :
 
 - `GEMINI_API_KEY` est obligatoire pour activer réellement Gemini. Si elle est vide, le backend retombe sur `MockOcrProvider`.
 - `GEMINI_API_ENDPOINT` est normalisé sans slash final par le code.
-- `GEMINI_MODEL` vaut `gemini-2.5-flash` par défaut.
+- `GEMINI_MODEL` vaut `gemma-4-31b-it` par défaut.
 - `OCR_RATE_LIMIT_PER_MINUTE` protège les endpoints OCR internes par client en mémoire.
 
 ## Endpoints Gemini appelés
@@ -56,7 +56,7 @@ POST {GEMINI_API_ENDPOINT}/models/{GEMINI_MODEL}:generateContent
 Valeurs par défaut utilisées par le prototype :
 
 ```http
-POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+POST https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent
 ```
 
 Authentification :
