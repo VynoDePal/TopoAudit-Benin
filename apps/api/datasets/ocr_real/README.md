@@ -7,11 +7,18 @@ contre une **vérité terrain**, sur de vrais plans topographiques scannés.
 
 **Ne jamais committer de documents fonciers réels non anonymisés.** Les images de plans
 réels contiennent des données personnelles/foncières sensibles. Le dossier `images/` est
-**gitignoré** : on y dépose localement les scans pour les évaluations « réelles », mais
-ils ne sont jamais versionnés. Le dépôt ne contient que :
+**gitignoré** : on y dépose localement jusqu'à ~10 scans anonymisés pour les évaluations
+« réelles », mais ils ne sont jamais versionnés. Le dépôt ne contient que :
 - ce README,
 - `manifest.json` : cas **synthétiques/anonymisés** (texte OCR + vérité terrain) servant à
-  l'évaluation **offline** du parser.
+  l'évaluation **offline** du parser,
+- `benchmark_report.md` : rapport agrégé (métriques + décision démo) — métriques seules,
+  sans coordonnées ni données nominatives.
+
+Chaque scan local peut être accompagné d'un attendu (template) :
+`expected_coordinates`, `expected_surface_m2`, `expected_crs`, `expected_parcel_count`,
+`scan_quality`. Le benchmark réel (Gemini/Azure) s'exécute **hors CI** (voir
+`scripts/evaluate_real_ocr.py`) ; un récapitulatif est produit dans `benchmark_report.md`.
 
 ## Format du manifest (`manifest.json`)
 

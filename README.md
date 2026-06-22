@@ -55,7 +55,7 @@ Attendre que les trois services soient prêts :
    - Sans fichier : le frontend passe en mode démo avec les parcelles exemples.
    - Avec fichier et sans clé Gemini : l'API locale utilise le mock OCR.
    - Avec fichier et clé Gemini : l'API appelle Gemini puis parse les bornes et surfaces détectées.
-4. Étape **Validation** : vérifier/corriger les bornes, la surface déclarée et le CRS (`EPSG:32631` par défaut), puis confirmer les parcelles.
+4. Étape **Validation** : vérifier/corriger les bornes et la surface déclarée, puis **confirmer le CRS détecté** (ou choisir `UNKNOWN_CRS` / `LOCAL_ONLY` si le plan n'est pas géoréférencé) avant de confirmer les parcelles. Aucun CRS n'est supposé `EPSG:32631` par défaut.
 5. Étape **Audit** : lancer le calcul d'audit. Le backend calcule les scores à partir des surfaces, géométries et données OCR persistées.
 6. Étape **Rapport** : générer et télécharger le PDF d'audit préliminaire.
 
