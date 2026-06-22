@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "description": "Benchmark OCR réel — cas synthétiques/anonymisés (texte OCR + vérité terrain). Les vrais scans (images/) ne sont jamais committés.",
+  "cases": [
+    {
+      "id": "synthetic_clear_utm31_single",
+      "file_path": "images/synthetic_clear_utm31_single.png",
+      "scan_quality": "synthetic",
+      "ocr_text": "PLAN TOPOGRAPHIQUE\nProjection : UTM zone 31N (WGS84) EPSG:32631\nParcelle A\nSURFACE: 05a 49ca\nB1 403825.84 707630.38\nB2 403836.57 707626.36\nB3 403840.12 707641.10\nB4 403829.20 707645.42",
+      "expected_crs": "EPSG_32631",
+      "expected_parcel_count": 1,
+      "expected_surface_m2": 549,
+      "expected_coordinates": [
+        {"label": "B1", "x": 403825.84, "y": 707630.38},
+        {"label": "B2", "x": 403836.57, "y": 707626.36},
+        {"label": "B3", "x": 403840.12, "y": 707641.10},
+        {"label": "B4", "x": 403829.20, "y": 707645.42}
+      ]
+    },
+    {
+      "id": "synthetic_clear_utm31_multi",
+      "file_path": "images/synthetic_clear_utm31_multi.png",
+      "scan_quality": "synthetic",
+      "ocr_text": "Parcelle 1\nB1 380557.07 747662.20\nB2 380575.18 747658.74\nB3 380581.41 747685.16\nB4 380561.02 747690.55\nSURFACE: 12a 48ca\n\nParcelle 2\nB1 380612.50 747700.25\nB2 380630.75 747699.10\nB3 380633.80 747724.45\nB4 380611.35 747726.00\nSuperficie: 04a 82ca",
+      "expected_crs": "EPSG_32631",
+      "expected_parcel_count": 2,
+      "expected_surface_m2": 1248,
+      "expected_coordinates": [
+        {"label": "B1", "x": 380557.07, "y": 747662.20},
+        {"label": "B2", "x": 380575.18, "y": 747658.74},
+        {"label": "B3", "x": 380581.41, "y": 747685.16},
+        {"label": "B4", "x": 380561.02, "y": 747690.55},
+        {"label": "B1", "x": 380612.50, "y": 747700.25},
+        {"label": "B2", "x": 380630.75, "y": 747699.10},
+        {"label": "B3", "x": 380633.80, "y": 747724.45},
+        {"label": "B4", "x": 380611.35, "y": 747726.00}
+      ]
+    },
+    {
+      "id": "synthetic_old_local_plan",
+      "file_path": "images/synthetic_old_local_plan.png",
+      "scan_quality": "old",
+      "ocr_text": "Plan ancien, coordonnées relatives (pas de projection)\nParcelle A\nSURFACE: 02a 30ca\nB1 900.0 2000.0\nB2 9000.0 1500.0\nB3 8500.0 9000.0\nB4 1200.0 8800.0",
+      "expected_crs": "LOCAL_ONLY",
+      "expected_parcel_count": 1,
+      "expected_surface_m2": 230,
+      "expected_coordinates": [
+        {"label": "B1", "x": 900.0, "y": 2000.0},
+        {"label": "B2", "x": 9000.0, "y": 1500.0},
+        {"label": "B3", "x": 8500.0, "y": 9000.0},
+        {"label": "B4", "x": 1200.0, "y": 8800.0}
+      ]
+    }
+  ]
+}

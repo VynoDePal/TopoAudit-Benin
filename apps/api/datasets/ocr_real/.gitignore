@@ -1,0 +1,6 @@
+# Ne jamais committer de plans fonciers réels (données sensibles non anonymisées).
+images/
+*.png
+*.jpg
+*.jpeg
+*.pdf
