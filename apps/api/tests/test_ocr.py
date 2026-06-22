@@ -258,15 +258,18 @@ def test_ocr_returns_mock_text_when_azure_key_is_missing():
     response = client.post("/api/projects/project-1/documents/document-1/ocr")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "provider": "mock",
-        "configured_provider": "mock",
-        "actual_provider": "mock",
-        "is_mock_result": True,
-        "text": MOCK_OCR_TEXT,
-        "document_id": "document-1",
-        "project_id": "project-1",
-    }
+    body = response.json()
+    assert body["provider"] == "mock"
+    assert body["configured_provider"] == "mock"
+    assert body["actual_provider"] == "mock"
+    assert body["is_mock_result"] is True
+    assert body["extracted_text"] == MOCK_OCR_TEXT
+    assert body["detected_crs"] == "EPSG_32631"
+    assert body["extraction_score_status"] == "needs_human_validation"
+    assert body["document_id"] == "document-1"
+    assert body["project_id"] == "project-1"
+    assert [p["label"] for p in body["parsed_parcels"]] == ["Parcelle A"]
+    assert body["parsed_parcels"][0]["point_count"] == 4
 
 
 def test_ocr_rejects_document_from_another_project():
@@ -334,7 +337,7 @@ def test_ocr_uses_azure_provider_with_polling_without_real_network(monkeypatch, 
     assert response.status_code == 200
     payload = response.json()
     assert payload["provider"] == "azure"
-    assert payload["text"] == "Parcelle A\nSurface déclarée: 05a 49ca\nP1 403825.84 707630.38"
+    assert payload["extracted_text"] == "Parcelle A\nSurface déclarée: 05a 49ca\nP1 403825.84 707630.38"
     assert FakeAzureClient.last_post is not None
     assert FakeAzureClient.last_post["url"] == (
         "https://azure.example/documentintelligence/documentModels/"
@@ -375,15 +378,18 @@ def test_ocr_body_endpoint_reuses_scoped_document_validation_and_mock_provider()
     response = client.post("/api/ocr", json={"project_id": "project-1", "document_id": "document-1"})
 
     assert response.status_code == 200
-    assert response.json() == {
-        "provider": "mock",
-        "configured_provider": "mock",
-        "actual_provider": "mock",
-        "is_mock_result": True,
-        "text": MOCK_OCR_TEXT,
-        "document_id": "document-1",
-        "project_id": "project-1",
-    }
+    body = response.json()
+    assert body["provider"] == "mock"
+    assert body["configured_provider"] == "mock"
+    assert body["actual_provider"] == "mock"
+    assert body["is_mock_result"] is True
+    assert body["extracted_text"] == MOCK_OCR_TEXT
+    assert body["detected_crs"] == "EPSG_32631"
+    assert body["extraction_score_status"] == "needs_human_validation"
+    assert body["document_id"] == "document-1"
+    assert body["project_id"] == "project-1"
+    assert [p["label"] for p in body["parsed_parcels"]] == ["Parcelle A"]
+    assert body["parsed_parcels"][0]["point_count"] == 4
     assert project.status == "OCR_EXTRACTED"
 
 
@@ -441,8 +447,8 @@ def test_ocr_uses_gemini_provider_for_utm_coordinates_and_surface(monkeypatch, t
     assert response.status_code == 200
     payload = response.json()
     assert payload["provider"] == "gemini"
-    assert "Surface déclarée: 05a 49ca" in payload["text"]
-    assert "403825.84 707630.38" in payload["text"]
+    assert "Surface déclarée: 05a 49ca" in payload["extracted_text"]
+    assert "403825.84 707630.38" in payload["extracted_text"]
     assert FakeGeminiClient.last_request is not None
     assert FakeGeminiClient.last_request["url"].endswith("/models/gemma-4-31b-it:generateContent")
     assert FakeGeminiClient.last_request["headers"] == {"x-goog-api-key": "test-gemini-key"}
@@ -470,7 +476,7 @@ def test_ocr_falls_back_to_mock_when_gemini_key_is_missing_locally(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["provider"] == "mock"
-    assert response.json()["text"] == MOCK_OCR_TEXT
+    assert response.json()["extracted_text"] == MOCK_OCR_TEXT
 
 
 def test_ocr_returns_503_when_gemini_key_is_missing_in_staging(monkeypatch):

@@ -19,11 +19,22 @@ from app.crs import (
 )
 from app.database import get_db, get_engine
 from app.geometry_engine import PolygonValidationResult, validate_polygon
+from app.extraction_score import extraction_score_calculator
 from app.models import Base, Project
-from app.ocr import OcrResult, enforce_ocr_rate_limit, extract_text_from_document
+from app.ocr import (
+    OcrParsedParcel,
+    OcrPoint,
+    OcrResult,
+    enforce_ocr_rate_limit,
+    extract_text_from_document,
+)
 from app.pdf_report import generate_audit_report_pdf
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
-from app.uploads import DocumentUploadResponse, create_document_from_upload
+from app.uploads import (
+    DocumentUploadResponse,
+    create_document_from_upload,
+    store_extracted_parcels,
+)
 from app.workflow import (
     AuditResponse,
     ProjectValidationResponse,
@@ -385,14 +396,44 @@ def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> 
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Document does not belong to project")
 
     text_content, provider = extract_text_from_document(document["storage_path"], document["content_type"])
+    # P0.3 : c'est ICI (et non à l'upload) que l'OCR parse et persiste les parcelles.
+    parcels, detection = store_extracted_parcels(
+        project_id=project_id,
+        document_id=document["id"],
+        ocr_text=text_content,
+        db=db,
+    )
     mark_project_ocr_extracted(project_id, db)
+
+    parsed_parcels = [
+        OcrParsedParcel(
+            label=parcel.label,
+            declared_surface_m2=parcel.declared_surface_m2,
+            point_count=len(parcel.points),
+            points=[OcrPoint(label=p.label, x=p.x, y=p.y) for p in parcel.points],
+        )
+        for parcel in parcels
+    ]
+    # Statut du score d'extraction au stade OCR : sans confiance OCR ni validation
+    # humaine, on signale needs_human_validation (jamais de score inventé).
+    total_points = sum(parcel.point_count for parcel in parsed_parcels)
+    score_status = extraction_score_calculator.calculate(
+        point_count=total_points,
+        declared_surface_m2=next((p.declared_surface_m2 for p in parsed_parcels), None),
+        detected_crs=detection.epsg,
+        average_point_confidence=None,
+    ).status
+
     configured = str(settings.ocr_provider).strip().lower()
     return OcrResult(
         provider=provider,
         configured_provider=configured,
         actual_provider=provider,
         is_mock_result=(provider == "mock"),
-        text=text_content,
+        extracted_text=text_content,
+        parsed_parcels=parsed_parcels,
+        detected_crs=detection.status.value,
+        extraction_score_status=score_status,
         document_id=document["id"],
         project_id=project["id"],
     )

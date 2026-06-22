@@ -233,6 +233,65 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "OcrParsedParcel": {
+        "properties": {
+          "declared_surface_m2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Surface M2"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "point_count": {
+            "default": 0,
+            "title": "Point Count",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/OcrPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "OcrParsedParcel",
+        "type": "object"
+      },
+      "OcrPoint": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "x",
+          "y"
+        ],
+        "title": "OcrPoint",
+        "type": "object"
+      },
       "OcrRequest": {
         "properties": {
           "document_id": {
@@ -269,8 +328,26 @@
             "title": "Configured Provider",
             "type": "string"
           },
+          "detected_crs": {
+            "examples": [
+              "EPSG_32631"
+            ],
+            "title": "Detected Crs",
+            "type": "string"
+          },
           "document_id": {
             "title": "Document Id",
+            "type": "string"
+          },
+          "extracted_text": {
+            "title": "Extracted Text",
+            "type": "string"
+          },
+          "extraction_score_status": {
+            "examples": [
+              "needs_human_validation"
+            ],
+            "title": "Extraction Score Status",
             "type": "string"
           },
           "is_mock_result": {
@@ -280,6 +357,13 @@
             ],
             "title": "Is Mock Result",
             "type": "boolean"
+          },
+          "parsed_parcels": {
+            "items": {
+              "$ref": "#/components/schemas/OcrParsedParcel"
+            },
+            "title": "Parsed Parcels",
+            "type": "array"
           },
           "project_id": {
             "title": "Project Id",
@@ -291,17 +375,15 @@
             ],
             "title": "Provider",
             "type": "string"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
           }
         },
         "required": [
           "provider",
           "configured_provider",
           "actual_provider",
-          "text",
+          "extracted_text",
+          "detected_crs",
+          "extraction_score_status",
           "document_id",
           "project_id"
         ],

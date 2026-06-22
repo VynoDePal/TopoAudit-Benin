@@ -21,6 +21,19 @@ P4 403829.20 707645.42
 """.strip()
 
 
+class OcrPoint(BaseModel):
+    label: str
+    x: float
+    y: float
+
+
+class OcrParsedParcel(BaseModel):
+    label: str
+    declared_surface_m2: float | None = None
+    point_count: int = 0
+    points: list[OcrPoint] = Field(default_factory=list)
+
+
 class OcrResult(BaseModel):
     provider: str = Field(examples=["mock"])
     # Traçabilité du provider : configuré (demandé) vs réel (après fallback éventuel),
@@ -28,7 +41,12 @@ class OcrResult(BaseModel):
     configured_provider: str = Field(examples=["gemini"])
     actual_provider: str = Field(examples=["mock"])
     is_mock_result: bool = Field(default=False, examples=[True])
-    text: str
+    extracted_text: str
+    parsed_parcels: list[OcrParsedParcel] = Field(default_factory=list)
+    # Statut CRS détecté (EPSG_32631, EPSG_4326, LOCAL_ONLY, UNKNOWN_CRS, NEEDS_GEOREFERENCING).
+    detected_crs: str = Field(examples=["EPSG_32631"])
+    # Statut du score d'extraction au stade OCR (avant validation humaine).
+    extraction_score_status: str = Field(examples=["needs_human_validation"])
     document_id: str
     project_id: str
 

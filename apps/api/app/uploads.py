@@ -13,10 +13,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.crs import transform_coordinate_to_wgs84
-from app.crs_detection import detect_crs
-from app.ocr import extract_text_from_document
+from app.crs_detection import CRSDetectionResult, detect_crs
 from app.surface_parser import parse_surface_to_m2
-from app.workflow import mark_project_ocr_extracted, mark_project_uploaded
+from app.workflow import mark_project_uploaded
 
 BYTES_PER_MB = 1024 * 1024
 ALLOWED_CONTENT_TYPES = {
@@ -141,25 +140,34 @@ def extract_parcels_from_ocr_text(ocr_text: str) -> list[ExtractedParcel]:
     return unique
 
 
-def _insert_extracted_parcels(
+def store_extracted_parcels(
     *,
     project_id: str,
     document_id: str,
-    storage_path: str,
-    content_type: str,
+    ocr_text: str,
     db: Session,
-) -> None:
-    ocr_text, _provider = extract_text_from_document(storage_path, content_type)
-    parcels = extract_parcels_from_ocr_text(ocr_text)
-    if not parcels:
-        return
+) -> tuple[list[ExtractedParcel], CRSDetectionResult]:
+    """Parse les parcelles du texte OCR, détecte le CRS et les persiste (idempotent).
 
-    # Détection du CRS à partir du texte OCR + de la plausibilité géographique des
-    # coordonnées. On ne transforme vers WGS84 que si le CRS est réellement
-    # géoréférencé (EPSG:32631/4326) ; sinon (LOCAL_ONLY/UNKNOWN/NEEDS_GEOREFERENCING)
-    # on conserve les coordonnées source SANS géométrie WGS84 inventée.
+    Retourne (parcelles parsées, détection CRS) pour enrichir la réponse OCR.
+    On ne transforme vers WGS84 que si le CRS est réellement géoréférencé
+    (EPSG:32631/4326) ; sinon (LOCAL_ONLY/UNKNOWN/NEEDS_GEOREFERENCING) on conserve
+    les coordonnées source SANS géométrie WGS84 inventée.
+    """
+    parcels = extract_parcels_from_ocr_text(ocr_text)
     all_coordinates = [[point.x, point.y] for parcel in parcels for point in parcel.points]
-    detection = detect_crs(text=ocr_text, coordinates=all_coordinates)
+    detection = detect_crs(text=ocr_text, coordinates=all_coordinates or None)
+    if not parcels:
+        return [], detection
+
+    # Idempotence : si l'OCR de ce document a déjà posé une levée, ne pas réinsérer.
+    existing = db.execute(
+        text("SELECT id FROM levees WHERE source_document_id = :doc LIMIT 1"),
+        {"doc": document_id},
+    ).first()
+    if existing is not None:
+        return parcels, detection
+
     stored_crs = detection.epsg if detection.is_transformable else detection.status.value
     transformable = detection.is_transformable
 
@@ -234,6 +242,8 @@ def _insert_extracted_parcels(
                 ),
                 params,
             )
+
+    return parcels, detection
 
 
 def _safe_project_segment(project_id: str) -> str:
@@ -359,18 +369,10 @@ def create_document_from_upload(project_id: str, file: UploadFile, db: Session) 
                 "created_at": datetime.now(UTC),
             },
         )
-        _insert_extracted_parcels(
-            project_id=project_id,
-            document_id=document_id,
-            storage_path=storage_path,
-            content_type=content_type,
-            db=db,
-        )
+        # P0.3 : l'upload STOCKE uniquement le fichier (aucun OCR ici). L'extraction
+        # est déclenchée explicitement via POST /documents/{id}/ocr. Le projet reste
+        # à l'état UPLOADED tant que l'OCR n'a pas été lancé.
         mark_project_uploaded(project_id, db)
-        # L'upload a DÉJÀ réalisé l'OCR (extract_text_from_document) et posé les parcelles ;
-        # on transite donc directement en OCR_EXTRACTED. Évite un 2ᵉ appel OCR redondant
-        # (lent + flaky) via /ocr : le flux devient upload → validate → audit.
-        mark_project_ocr_extracted(project_id, db)
     except Exception:
         db.rollback()
         Path(storage_path).unlink(missing_ok=True)

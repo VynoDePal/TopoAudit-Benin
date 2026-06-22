@@ -81,6 +81,8 @@ class FakeUploadToAuditSession(FakeEndToEndSession):
         if "INSERT INTO documents" in sql:
             self.inserted_document = dict(params)
             return FakeResult(None)
+        if "FROM documents" in sql:
+            return FakeResult(self.inserted_document)
         if "INSERT INTO levees" in sql:
             self.levees.append(dict(params))
             return FakeResult(None)
@@ -147,13 +149,23 @@ def test_e2e_upload_mock_ocr_validation_and_audit_reuse_extracted_parcels(tmp_pa
 
     assert upload_response.status_code == 201
     assert upload_response.json()["filename"] == "plan.png"
-    assert session.status == "OCR_EXTRACTED"
+    document_id = upload_response.json()["id"]
+    # P0.3 : l'upload ne fait que stocker (état UPLOADED, aucune parcelle).
+    assert session.status == "UPLOADED"
     assert session.inserted_document is not None
+    assert session.levees == []
+    assert session.parcels == []
+    assert session.rolled_back is False
+
+    # L'OCR (étape séparée) extrait et pose les parcelles.
+    ocr_response = client.post(f"/api/projects/project-upload-flow/documents/{document_id}/ocr")
+    assert ocr_response.status_code == 200
+    assert session.status == "OCR_EXTRACTED"
     assert len(session.levees) == 1
     assert [parcel["label"] for parcel in session.parcels] == ["Parcelle A"]
     assert session.parcels[0]["declared_surface_m2"] == 549
     assert len(session.survey_points) == 4
-    assert session.rolled_back is False
+    assert [p["label"] for p in ocr_response.json()["parsed_parcels"]] == ["Parcelle A"]
 
     validate_response = client.post("/api/projects/project-upload-flow/validate")
     assert validate_response.status_code == 200
@@ -187,7 +199,7 @@ def test_e2e_clear_wgs84_image_runs_ocr_validation_audit_and_pdf():
     ocr_response = client.post("/api/projects/project-clear-wgs84/documents/doc-clear-wgs84/ocr")
     assert ocr_response.status_code == 200
     assert ocr_response.json()["provider"] == "mock"
-    assert "Surface déclarée" in ocr_response.json()["text"]
+    assert "Surface déclarée" in ocr_response.json()["extracted_text"]
     assert session.status == "OCR_EXTRACTED"
 
     validation_response = client.post(
@@ -228,7 +240,7 @@ def test_e2e_blurry_image_keeps_low_extraction_score_warning_path():
 
     ocr_response = client.post("/api/projects/project-blur/documents/doc-blur/ocr")
     assert ocr_response.status_code == 200
-    assert ocr_response.json()["text"] == MOCK_OCR_TEXT
+    assert ocr_response.json()["extracted_text"] == MOCK_OCR_TEXT
 
     assert client.post("/api/projects/project-blur/validate").status_code == 200
     audit_response = client.post("/api/projects/project-blur/audit")
