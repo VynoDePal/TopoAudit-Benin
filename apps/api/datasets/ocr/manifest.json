@@ -45,6 +45,24 @@
           ]
         }
       ]
+    },
+    {
+      "id": "verbose_gemma_with_echo_single_parcel",
+      "source": "synthetic_gemini_verbose_echo",
+      "ocr_text": "Analyse du plan topographique. Je relis la table des bornes :\n- B1: X = 401200.10, Y = 705310.40\n- B2: X = 401215.30, Y = 705305.80\n- B3: X = 401220.00, Y = 705325.60\n- B4: X = 401205.50, Y = 705330.20\n- B5: X = 401195.00, Y = 705318.00\nSURFACE: 02a 30ca\nRéponse finale :\nB1 401200.10 705310.40\nB2 401215.30 705305.80\nB3 401220.00 705325.60\nB4 401205.50 705330.20\nB5 401195.00 705318.00",
+      "expected_parcels": [
+        {
+          "label": "Parcelle 1",
+          "declared_surface_m2": 230,
+          "points": [
+            {"label": "B1", "x": 401200.10, "y": 705310.40},
+            {"label": "B2", "x": 401215.30, "y": 705305.80},
+            {"label": "B3", "x": 401220.00, "y": 705325.60},
+            {"label": "B4", "x": 401205.50, "y": 705330.20},
+            {"label": "B5", "x": 401195.00, "y": 705318.00}
+          ]
+        }
+      ]
     }
   ]
 }
