@@ -20,6 +20,9 @@ P3 403840.12 707641.10
 P4 403829.20 707645.42
 """.strip()
 
+# Backoff (secondes) entre tentatives Gemini en cas d'erreur réseau transitoire.
+GEMINI_RETRY_BACKOFF_SECONDS = 1.5
+
 
 class OcrPoint(BaseModel):
     label: str
@@ -217,24 +220,34 @@ def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> st
     }
     headers = {"x-goog-api-key": settings.gemini_api_key}
 
-    try:
-        # Timeout large : gemma-4-31b (modèle « raisonnant », multimodal) met
-        # couramment 30-60 s+ sur un scan ; 60 s était trop juste → ReadTimeout
-        # intermittent (« service unavailable ») à l'upload.
-        with httpx.Client(timeout=180.0) as client:
-            response = client.post(_gemini_generate_url(), headers=headers, json=payload)
-            response.raise_for_status()
-            return _extract_gemini_text(response.json())
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Gemini OCR request failed",
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Gemini OCR service unavailable",
-        ) from exc
+    # Timeout large : gemma-4-31b (modèle « raisonnant », multimodal) met couramment
+    # 30-60 s+ sur un scan ; 60 s était trop juste → ReadTimeout intermittent.
+    # Retry : le DNS du conteneur (résolveur Docker) et le réseau échouent parfois de
+    # façon transitoire (« Temporary failure in name resolution », ReadTimeout) ; on
+    # réessaie avec backoff. Une réponse d'erreur HTTP de Gemini (4xx/5xx) est, elle,
+    # définitive → pas de retry.
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            with httpx.Client(timeout=180.0) as client:
+                response = client.post(_gemini_generate_url(), headers=headers, json=payload)
+                response.raise_for_status()
+                return _extract_gemini_text(response.json())
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Gemini OCR request failed",
+            ) from exc
+        except httpx.HTTPError as exc:
+            # ConnectError / Timeout / échec DNS → transitoire, on réessaie.
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(GEMINI_RETRY_BACKOFF_SECONDS * (attempt + 1))
+
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="Gemini OCR service unavailable",
+    ) from last_exc
 
 
 def _extract_gemini_text(payload: dict[str, Any]) -> str:
