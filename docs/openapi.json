@@ -543,7 +543,7 @@
             "title": "Declared Surface M2"
           },
           "detected_crs": {
-            "default": "EPSG:32631",
+            "default": "UNKNOWN_CRS",
             "title": "Detected Crs",
             "type": "string"
           },

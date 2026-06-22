@@ -78,6 +78,35 @@ def test_coordinates_only_unknown_when_out_of_range():
     assert result.status == CRSStatus.UNKNOWN_CRS
 
 
+# --- P0 : « WGS84 » seul ne doit JAMAIS donner EPSG_4326 automatiquement ---
+def test_wgs84_text_with_utm_coords_is_epsg32631_not_4326():
+    result = detect_crs(text="Datum WGS84", coordinates=BENIN_UTM)
+    assert result.status == CRSStatus.EPSG_32631
+
+
+def test_itrf_text_with_utm_coords_is_never_4326():
+    result = detect_crs(text="ITRF 2005", coordinates=BENIN_UTM)
+    assert result.status == CRSStatus.EPSG_32631
+    assert result.status != CRSStatus.EPSG_4326
+
+
+def test_explicit_geographic_text_with_lonlat_is_epsg4326():
+    geo = [[2.35, 9.31], [2.36, 9.31], [2.36, 9.32], [2.35, 9.32]]
+    result = detect_crs(text="Coordonnées géographiques WGS84", coordinates=geo)
+    assert result.status == CRSStatus.EPSG_4326
+
+
+def test_wgs84_text_without_coords_is_not_epsg4326():
+    result = detect_crs(text="WGS84", coordinates=None)
+    assert result.status in (CRSStatus.UNKNOWN_CRS, CRSStatus.NEEDS_GEOREFERENCING)
+    assert result.status != CRSStatus.EPSG_4326
+
+
+def test_bare_wgs84_text_alone_returns_none():
+    assert detect_crs_from_text("WGS84") is None
+    assert detect_crs_from_text("ITRF 2005") is None
+
+
 @pytest.mark.parametrize(
     "forbidden",
     [

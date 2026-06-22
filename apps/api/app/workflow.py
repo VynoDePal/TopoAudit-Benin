@@ -260,7 +260,9 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                 "parcel_id": parcel_id,
                 "label": row.get("label") or "Parcelle sans libellé",
                 "declared_surface_m2": row.get("declared_surface_m2"),
-                "detected_crs": row.get("detected_crs") or "EPSG:32631",
+                # Pas de défaut silencieux EPSG:32631 : CRS absent → UNKNOWN_CRS
+                # (l'audit ne calculera pas de surface UTM sur un CRS non confirmé).
+                "detected_crs": row.get("detected_crs") or "UNKNOWN_CRS",
                 "coordinates": [],
                 "confidences": [],
             },
@@ -280,7 +282,7 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
         calculated_surface_m2: float | None = None
         invalid_geometry = True
         if isinstance(coordinates, list) and len(coordinates) >= 3:
-            geometry = validate_polygon(coordinates, str(parcel["detected_crs"] or "EPSG:32631"))
+            geometry = validate_polygon(coordinates, str(parcel["detected_crs"] or "UNKNOWN_CRS"))
             calculated_surface_m2 = geometry.area_m2
             invalid_geometry = not geometry.valid
         average_confidence = sum(confidences) / len(confidences) if isinstance(confidences, list) and confidences else None
