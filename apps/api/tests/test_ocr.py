@@ -545,3 +545,69 @@ def test_ocr_rate_limit_is_enforced(monkeypatch):
     response = client.post("/api/projects/project-1/documents/document-1/ocr")
 
     assert response.status_code == 429
+
+
+class _FlakyGeminiClient:
+    """Échoue (ConnectError) sur les N premières tentatives, puis renvoie un résultat."""
+
+    fail_times = 1
+    calls = 0
+    good = FakeGeminiResponse(
+        {"candidates": [{"content": {"parts": [{"text": "B1 403825.84 707630.38"}]}}]}
+    )
+
+    def __init__(self, timeout):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, url, headers, json):
+        type(self).calls += 1
+        if type(self).calls <= type(self).fail_times:
+            raise httpx.ConnectError("Temporary failure in name resolution")
+        return type(self).good
+
+
+def _gemini_doc(tmp_path, monkeypatch):
+    document_path = tmp_path / "plan.png"
+    document_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    project = SimpleNamespace(id="project-1", name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id="document-1", project_id="project-1", filename="plan.png",
+        content_type="image/png", storage_path=str(document_path),
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+    monkeypatch.setattr("app.ocr.GEMINI_RETRY_BACKOFF_SECONDS", 0)
+    monkeypatch.setattr("app.ocr.settings.ocr_provider", "gemini")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "test-gemini-key")
+    monkeypatch.setattr("app.ocr.httpx.Client", _FlakyGeminiClient)
+
+
+def test_ocr_retries_gemini_on_transient_connection_error(monkeypatch, tmp_path):
+    _FlakyGeminiClient.calls = 0
+    _FlakyGeminiClient.fail_times = 1  # 1 échec DNS puis succès
+    _gemini_doc(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr")
+
+    assert response.status_code == 200
+    assert _FlakyGeminiClient.calls == 2
+    assert "403825.84" in response.json()["extracted_text"]
+
+
+def test_ocr_gemini_service_unavailable_after_all_retries(monkeypatch, tmp_path):
+    _FlakyGeminiClient.calls = 0
+    _FlakyGeminiClient.fail_times = 99  # toutes les tentatives échouent
+    _gemini_doc(tmp_path, monkeypatch)
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Gemini OCR service unavailable"
+    assert _FlakyGeminiClient.calls == 3
