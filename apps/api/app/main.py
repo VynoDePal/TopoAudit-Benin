@@ -339,22 +339,31 @@ def replace_project_parcels(
             ),
             {"id": parcel_id, "project_id": project_id, "label": parcel.label, "declared": parcel.declared_surface_m2, "crs": parcel.detected_crs, "created_at": now},
         )
+        # P0.2 : on ne transforme vers WGS84 QUE si le CRS est géoréférencé. Pour un CRS
+        # local/inconnu, on conserve les coordonnées source SANS géométrie WGS84 inventée
+        # (geom NULL) — pas de fausse projection des coordonnées locales.
+        crs = parcel.detected_crs
+        transformable = crs in ("EPSG:32631", "EPSG:4326", "EPSG_32631", "EPSG_4326")
         for index, point in enumerate(parcel.points):
-            crs = parcel.detected_crs if parcel.detected_crs in ("EPSG:32631", "EPSG:4326") else "EPSG:32631"
-            try:
+            params = {
+                "id": str(uuid4()), "parcel_id": parcel_id, "label": point.label, "idx": index,
+                "sx": point.x, "sy": point.y, "conf": point.confidence, "created_at": now,
+            }
+            if transformable:
                 longitude, latitude = transform_coordinate_to_wgs84(point.x, point.y, crs)
-            except Exception:  # noqa: BLE001 — CRS local/inconnu : on stocke les coords brutes
-                longitude, latitude = point.x, point.y
+                params["lon"], params["lat"] = longitude, latitude
+                geom_sql = "ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)"
+            else:
+                geom_sql = "NULL"
             db.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO survey_points
                         (id, parcel_id, label, point_index, source_x, source_y, confidence, geom, created_at)
-                    VALUES (:id, :parcel_id, :label, :idx, :sx, :sy, :conf,
-                            ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :created_at)
+                    VALUES (:id, :parcel_id, :label, :idx, :sx, :sy, :conf, {geom_sql}, :created_at)
                     """
                 ),
-                {"id": str(uuid4()), "parcel_id": parcel_id, "label": point.label, "idx": index, "sx": point.x, "sy": point.y, "conf": point.confidence, "lon": longitude, "lat": latitude, "created_at": now},
+                params,
             )
     db.commit()
     return _read_project_parcels(project_id, db)
