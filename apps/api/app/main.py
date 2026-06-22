@@ -326,10 +326,12 @@ def validate_project(
     # VRAIE parcelle. Sinon l'audit retombe sur ses valeurs par défaut (historique).
     if payload is not None and payload.coordinates:
         geometry = validate_polygon(payload.coordinates, payload.source_crs)
+        # Géométrie calculée, mais la confiance OCR n'est pas connue ici : on ne stocke
+        # pas de score d'extraction inventé → l'audit signalera « validation humaine requise ».
         upsert_audit_inputs(
             project_id,
             db,
-            extraction_score=87,
+            extraction_score=None,
             declared_surface_m2=payload.declared_surface_m2,
             calculated_surface_m2=geometry.area_m2,
             invalid_geometry=not geometry.valid,

@@ -8,10 +8,22 @@
             "type": "string"
           },
           "extraction_score": {
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Extraction Score",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Score"
+          },
+          "extraction_score_status": {
+            "default": "computed",
+            "title": "Extraction Score Status",
+            "type": "string"
           },
           "parcels": {
             "items": {
@@ -50,7 +62,6 @@
           "project_id",
           "state",
           "audit_id",
-          "extraction_score",
           "technical_score",
           "risk_level",
           "warnings"
@@ -324,10 +335,22 @@
             "title": "Declared Surface M2"
           },
           "extraction_score": {
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Extraction Score",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Score"
+          },
+          "extraction_score_status": {
+            "default": "computed",
+            "title": "Extraction Score Status",
+            "type": "string"
           },
           "invalid_geometry": {
             "default": false,
@@ -369,7 +392,6 @@
         },
         "required": [
           "label",
-          "extraction_score",
           "technical_score",
           "risk_level",
           "warnings"

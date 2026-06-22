@@ -199,7 +199,9 @@ def test_project_audit_report_endpoint_returns_pdf_response():
     assert session.committed is True
     text = extract_pdf_text(response.content)
     normalized_text = normalize_text(text)
-    assert "87/100" in text
+    # Parcelles sans confiance OCR : pas de score inventé, mention de validation humaine.
+    assert "Validation humaine requise" in normalized_text
+    assert "87/100" not in text
     assert "48/100" in text
     assert "Parcelle A" in text
     assert "Parcelle B" in text
