@@ -8,10 +8,14 @@ from scripts import evaluate_ocr
 def test_evaluate_default_ocr_dataset_returns_perfect_accuracy():
     result = evaluate_ocr.evaluate_dataset()
 
-    assert result["case_count"] == 2
+    assert result["case_count"] == 3
     assert result["accuracy"] == 1.0
     assert result["matched_fields"] == result["total_fields"]
-    assert {case["id"] for case in result["cases"]} == {"mock_utm_single_parcel", "gemini_style_multi_parcel"}
+    assert {case["id"] for case in result["cases"]} == {
+        "mock_utm_single_parcel",
+        "gemini_style_multi_parcel",
+        "verbose_gemma_with_echo_single_parcel",
+    }
 
 
 def test_evaluate_ocr_does_not_call_network(monkeypatch):

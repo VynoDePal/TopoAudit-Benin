@@ -369,7 +369,16 @@ def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> 
 
     text_content, provider = extract_text_from_document(document["storage_path"], document["content_type"])
     mark_project_ocr_extracted(project_id, db)
-    return OcrResult(provider=provider, text=text_content, document_id=document["id"], project_id=project["id"])
+    configured = str(settings.ocr_provider).strip().lower()
+    return OcrResult(
+        provider=provider,
+        configured_provider=configured,
+        actual_provider=provider,
+        is_mock_result=(provider == "mock"),
+        text=text_content,
+        document_id=document["id"],
+        project_id=project["id"],
+    )
 
 
 @app.post("/api/projects/{project_id}/documents/{document_id}/ocr", response_model=OcrResult, tags=["ocr"])

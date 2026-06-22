@@ -260,6 +260,9 @@ def test_ocr_returns_mock_text_when_azure_key_is_missing():
     assert response.status_code == 200
     assert response.json() == {
         "provider": "mock",
+        "configured_provider": "mock",
+        "actual_provider": "mock",
+        "is_mock_result": True,
         "text": MOCK_OCR_TEXT,
         "document_id": "document-1",
         "project_id": "project-1",
@@ -374,6 +377,9 @@ def test_ocr_body_endpoint_reuses_scoped_document_validation_and_mock_provider()
     assert response.status_code == 200
     assert response.json() == {
         "provider": "mock",
+        "configured_provider": "mock",
+        "actual_provider": "mock",
+        "is_mock_result": True,
         "text": MOCK_OCR_TEXT,
         "document_id": "document-1",
         "project_id": "project-1",

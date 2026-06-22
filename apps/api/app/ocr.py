@@ -23,6 +23,11 @@ P4 403829.20 707645.42
 
 class OcrResult(BaseModel):
     provider: str = Field(examples=["mock"])
+    # Traçabilité du provider : configuré (demandé) vs réel (après fallback éventuel),
+    # et drapeau si le résultat vient du mock (pour la démo / le débogage).
+    configured_provider: str = Field(examples=["gemini"])
+    actual_provider: str = Field(examples=["mock"])
+    is_mock_result: bool = Field(default=False, examples=[True])
     text: str
     document_id: str
     project_id: str
