@@ -8,10 +8,22 @@
             "type": "string"
           },
           "extraction_score": {
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Extraction Score",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Score"
+          },
+          "extraction_score_status": {
+            "default": "computed",
+            "title": "Extraction Score Status",
+            "type": "string"
           },
           "parcels": {
             "items": {
@@ -50,12 +62,59 @@
           "project_id",
           "state",
           "audit_id",
-          "extraction_score",
           "technical_score",
           "risk_level",
           "warnings"
         ],
         "title": "AuditResponse",
+        "type": "object"
+      },
+      "AuthRequest": {
+        "properties": {
+          "email": {
+            "examples": [
+              "arpenteur@example.bj"
+            ],
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "AuthRequest",
+        "type": "object"
+      },
+      "AuthResponse": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "user_id",
+          "email"
+        ],
+        "title": "AuthResponse",
         "type": "object"
       },
       "Body_upload_project_document_api_projects__project_id__documents_post": {
@@ -222,6 +281,65 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "OcrParsedParcel": {
+        "properties": {
+          "declared_surface_m2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declared Surface M2"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "point_count": {
+            "default": 0,
+            "title": "Point Count",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/OcrPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "OcrParsedParcel",
+        "type": "object"
+      },
+      "OcrPoint": {
+        "properties": {
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "x",
+          "y"
+        ],
+        "title": "OcrPoint",
+        "type": "object"
+      },
       "OcrRequest": {
         "properties": {
           "document_id": {
@@ -258,8 +376,26 @@
             "title": "Configured Provider",
             "type": "string"
           },
+          "detected_crs": {
+            "examples": [
+              "EPSG_32631"
+            ],
+            "title": "Detected Crs",
+            "type": "string"
+          },
           "document_id": {
             "title": "Document Id",
+            "type": "string"
+          },
+          "extracted_text": {
+            "title": "Extracted Text",
+            "type": "string"
+          },
+          "extraction_score_status": {
+            "examples": [
+              "needs_human_validation"
+            ],
+            "title": "Extraction Score Status",
             "type": "string"
           },
           "is_mock_result": {
@@ -269,6 +405,13 @@
             ],
             "title": "Is Mock Result",
             "type": "boolean"
+          },
+          "parsed_parcels": {
+            "items": {
+              "$ref": "#/components/schemas/OcrParsedParcel"
+            },
+            "title": "Parsed Parcels",
+            "type": "array"
           },
           "project_id": {
             "title": "Project Id",
@@ -280,17 +423,15 @@
             ],
             "title": "Provider",
             "type": "string"
-          },
-          "text": {
-            "title": "Text",
-            "type": "string"
           }
         },
         "required": [
           "provider",
           "configured_provider",
           "actual_provider",
-          "text",
+          "extracted_text",
+          "detected_crs",
+          "extraction_score_status",
           "document_id",
           "project_id"
         ],
@@ -324,10 +465,22 @@
             "title": "Declared Surface M2"
           },
           "extraction_score": {
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Extraction Score",
-            "type": "integer"
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Score"
+          },
+          "extraction_score_status": {
+            "default": "computed",
+            "title": "Extraction Score Status",
+            "type": "string"
           },
           "invalid_geometry": {
             "default": false,
@@ -369,7 +522,6 @@
         },
         "required": [
           "label",
-          "extraction_score",
           "technical_score",
           "risk_level",
           "warnings"
@@ -908,6 +1060,88 @@
         "summary": "Api Root",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "operationId": "register_api_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register",
+        "tags": [
+          "auth"
         ]
       }
     },

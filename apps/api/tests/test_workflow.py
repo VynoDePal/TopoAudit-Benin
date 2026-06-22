@@ -120,7 +120,7 @@ def test_audit_requires_validated_state():
     assert session.status == "OCR_EXTRACTED"
 
 
-def test_audit_moves_project_to_audited_and_returns_default_scores():
+def test_audit_without_evidence_requires_human_validation_no_default_score():
     session = FakeWorkflowSession(status="VALIDATED")
     app.dependency_overrides[get_db] = override_db(session)
     client = TestClient(app)
@@ -131,12 +131,15 @@ def test_audit_moves_project_to_audited_and_returns_default_scores():
     payload = response.json()
     assert payload["project_id"] == "project-1"
     assert payload["state"] == "AUDITED"
-    assert payload["extraction_score"] == 87
+    # Aucune preuve d'extraction → pas de score inventé (jamais 87).
+    assert payload["extraction_score"] is None
+    assert payload["extraction_score_status"] == "needs_human_validation"
     assert payload["technical_score"] == 60
     assert payload["risk_level"] == "moderate"
     assert payload["warnings"] == [
         "Aucune comparaison cadastrale officielle effectuée.",
-        "Données de surface insuffisantes pour un scoring technique complet de Parcelle validée.",
+        "Données de surface insuffisantes pour un scoring technique complet de Parcelle en attente de validation.",
+        "Score d'extraction indisponible : validation humaine des coordonnées requise.",
     ]
     UUID(payload["audit_id"])
     assert session.status == "AUDITED"
@@ -308,7 +311,8 @@ def test_audit_marks_parcel_without_enough_points_as_invalid_geometry():
         {
             "parcel_id": "parcel-a",
             "label": "Parcelle A",
-            "extraction_score": 87,
+            "extraction_score": None,
+            "extraction_score_status": "needs_human_validation",
             "declared_surface_m2": 176.0,
             "calculated_surface_m2": None,
             "invalid_geometry": True,
@@ -323,5 +327,6 @@ def test_audit_marks_parcel_without_enough_points_as_invalid_geometry():
     assert payload["warnings"] == [
         "Aucune comparaison cadastrale officielle effectuée.",
         "Incohérence géométrique détectée sur Parcelle A.",
+        "Score d'extraction indisponible : validation humaine des coordonnées requise.",
     ]
 

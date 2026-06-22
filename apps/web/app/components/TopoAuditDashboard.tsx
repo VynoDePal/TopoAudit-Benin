@@ -121,6 +121,8 @@ export default function TopoAuditDashboard() {
   const [busy, setBusy] = useState<null | "ocr" | "audit" | "export">(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [auditResult, setAuditResult] = useState<AuditApiResponse | null>(null);
+  // Métadonnées OCR (P0.3) : provider réel vs mock + CRS détecté, pour affichage explicite.
+  const [ocrInfo, setOcrInfo] = useState<{ isMock: boolean; provider: string; crs: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const t = THEMES[themeKey];
@@ -131,6 +133,10 @@ export default function TopoAuditDashboard() {
   useEffect(() => () => { if (filePreview) URL.revokeObjectURL(filePreview); }, [filePreview]);
   // Toute (re)définition des parcelles (upload, édition) invalide l'audit affiché.
   useEffect(() => { setAuditResult(null); }, [parcels]);
+  // P1.2 : CRS géoréférencé (EPSG 32631/4326) ? Sinon (LOCAL_ONLY/UNKNOWN/NEEDS_GEOREF)
+  // → pas de fond satellite, vue locale. En l'absence d'OCR (démo) on suppose géoréférencé.
+  const isGeoreferenced = !ocrInfo || ocrInfo.crs === "EPSG_32631" || ocrInfo.crs === "EPSG_4326";
+  useEffect(() => { if (!isGeoreferenced && mapSat) setMapSat(false); }, [isGeoreferenced, mapSat]);
 
   // ---- couche API (backend FastAPI réel) ----
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
@@ -161,7 +167,14 @@ export default function TopoAuditDashboard() {
       points: p.points.map((pt) => ({ label: pt.label, x: num(pt.x), y: num(pt.y), confidence: pt.confidence })),
     }));
 
-  // Intake → OCR réel : crée le projet, uploade le plan (OCR gemma), récupère les bornes.
+  // Statut CRS (EPSG_32631…) → libellé EPSG transformable, ou statut tel quel (LOCAL_ONLY…).
+  const crsStatusToDisplay = (status?: string): string => {
+    if (status === "EPSG_32631") return "EPSG:32631";
+    if (status === "EPSG_4326") return "EPSG:4326";
+    return status ?? "EPSG:32631";
+  };
+
+  // Intake → OCR réel : crée le projet, uploade le plan, lance l'OCR, récupère les bornes.
   const runOcr = async () => {
     setErrorMsg(null);
     if (!file) { setStage("validate"); return; } // mode démo (sans fichier)
@@ -173,8 +186,12 @@ export default function TopoAuditDashboard() {
       form.append("file", file);
       const up = await fetch(`${apiBaseUrl}/projects/${proj.id}/documents`, { method: "POST", body: form });
       if (!up.ok) throw new Error((await up.text().catch(() => "")) || `Upload → ${up.status}`);
-      const data = await apiJson("GET", `/projects/${proj.id}/parcels`);
-      const mapped = mapFromApi(data.parcels ?? []);
+      const upDoc = await up.json();
+      // P0.3 : l'OCR est une étape EXPLICITE (l'upload ne fait que stocker le fichier).
+      const ocr = await apiJson("POST", `/projects/${proj.id}/documents/${upDoc.id}/ocr`);
+      setOcrInfo({ isMock: !!ocr.is_mock_result, provider: ocr.actual_provider ?? "?", crs: ocr.detected_crs ?? "UNKNOWN_CRS" });
+      const crsForParcels = crsStatusToDisplay(ocr.detected_crs);
+      const mapped = mapFromApi((ocr.parsed_parcels ?? []).map((p: any) => ({ ...p, detected_crs: crsForParcels })));
       if (mapped.length) {
         setParcels(mapped);
         setActiveIdx(0);
@@ -593,6 +610,15 @@ export default function TopoAuditDashboard() {
                   <h1 style={{ margin: "0 0 6px", fontSize: 26, fontWeight: 700, letterSpacing: "-.015em" }}>{s.val_title}</h1>
                   <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: t.sub, maxWidth: 680 }}>{s.val_sub}</p>
                 </div>
+                {ocrInfo && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, background: ocrInfo.isMock ? "#fef3c7" : "#dcfce7", color: ocrInfo.isMock ? "#92400e" : "#166534", border: `1px solid ${ocrInfo.isMock ? "#f59e0b" : "#22c55e"}` }}>
+                      {ocrInfo.isMock ? (lang === "fr" ? "⚠ Mock OCR (démo)" : "⚠ Mock OCR (demo)") : (lang === "fr" ? "✓ OCR réel" : "✓ Real OCR")}
+                      {` · ${ocrInfo.provider}`}
+                    </span>
+                    <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>CRS : {ocrInfo.crs}</span>
+                  </div>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 18, alignItems: "start" }}>
                   <section style={{ ...panelCard, overflow: "hidden", position: "sticky", top: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", borderBottom: `1px solid ${t.line}` }}>
@@ -791,7 +817,7 @@ export default function TopoAuditDashboard() {
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{s.map_title}</span>
                       <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.line}`, borderRadius: 8, overflow: "hidden", fontSize: 11.5, fontWeight: 600 }}>
                         <button onClick={() => setMapSat(false)} style={{ border: "none", cursor: "pointer", padding: "6px 13px", background: !mapSat ? t.accent : "transparent", color: !mapSat ? t.accentInk : t.sub }}>{s.map_plan}</button>
-                        <button onClick={() => setMapSat(true)} style={{ border: "none", cursor: "pointer", padding: "6px 13px", background: mapSat ? t.accent : "transparent", color: mapSat ? t.accentInk : t.sub }}>{s.map_sat}</button>
+                        <button onClick={() => isGeoreferenced && setMapSat(true)} disabled={!isGeoreferenced} title={!isGeoreferenced ? s.map_local : undefined} style={{ border: "none", cursor: isGeoreferenced ? "pointer" : "not-allowed", padding: "6px 13px", background: mapSat ? t.accent : "transparent", color: mapSat ? t.accentInk : t.sub, opacity: isGeoreferenced ? 1 : 0.45 }}>{s.map_sat}</button>
                       </div>
                     </div>
                     <div style={{ position: "relative", background: view.map.bg }}>
@@ -811,6 +837,7 @@ export default function TopoAuditDashboard() {
                         <g transform="translate(20,398)"><rect x="0" y="-5" width={view.map.scaleLen} height="5" fill={view.map.ink} /><rect x="0" y="-5" width={view.map.scaleHalf} height="5" fill={view.map.bg} stroke={view.map.ink} strokeWidth="0.8" /><text x="0" y="-9" fontFamily={MONO} fontSize="9" fill={view.map.ink}>0</text><text x={view.map.scaleLen} y="-9" fontFamily={MONO} fontSize="9" fill={view.map.ink} textAnchor="end">{view.map.scaleLabel}</text></g>
                       </svg>
                       {view.map.sat && <div style={{ position: "absolute", left: 12, top: 12, fontFamily: MONO, fontSize: 10, color: view.map.ink, background: view.map.bg, padding: "5px 9px", borderRadius: 6, border: `1px solid ${view.map.gridColor}`, maxWidth: 280, lineHeight: 1.4 }}>{s.sat_note}</div>}
+                      {!isGeoreferenced && <div style={{ position: "absolute", left: 12, top: 12, fontFamily: MONO, fontSize: 10, color: "#92400e", background: "#fef3c7", padding: "5px 9px", borderRadius: 6, border: "1px solid #f59e0b", maxWidth: 300, lineHeight: 1.4 }}>{s.map_local}</div>}
                     </div>
                   </section>
                   <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>

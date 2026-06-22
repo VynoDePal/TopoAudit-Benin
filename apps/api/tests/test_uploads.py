@@ -38,6 +38,8 @@ class FakeUploadSession:
         if "INSERT INTO documents" in sql:
             self.inserted = dict(params)
             return FakeResult(None)
+        if "FROM documents" in sql:
+            return FakeResult(self.inserted)
         if "INSERT INTO levees" in sql:
             self.levees.append(dict(params))
             return FakeResult(None)
@@ -108,17 +110,20 @@ def test_upload_document_persists_file_and_database_metadata(tmp_path, monkeypat
         "sha256": hashlib.sha256(content).hexdigest(),
         "storage_path": payload["storage_path"],
     }
-    # L'upload réalise l'OCR + pose les parcelles → état directement OCR_EXTRACTED
-    # (plus besoin d'un appel /ocr séparé avant validate).
-    assert session.project_status == "OCR_EXTRACTED"
+    # P0.3 : l'upload STOCKE seulement le fichier → état UPLOADED ; aucune parcelle
+    # n'est extraite ici (l'OCR est déclenché explicitement via /ocr).
+    assert session.project_status == "UPLOADED"
+    assert session.levees == []
+    assert session.parcels == []
     assert session.committed is True
     assert session.rolled_back is False
 
 
-def test_upload_extracts_multiple_coordinate_groups_into_distinct_parcels(tmp_path, monkeypatch):
+def test_ocr_extracts_multiple_coordinate_groups_into_distinct_parcels(tmp_path, monkeypatch):
+    # P0.3 : l'extraction multi-parcelles se fait au stade OCR (pas à l'upload).
     monkeypatch.setattr(settings, "local_storage_path", str(tmp_path))
     monkeypatch.setattr(
-        "app.uploads.extract_text_from_document",
+        "app.main.extract_text_from_document",
         lambda storage_path, content_type: (
             """
             Plan multi-parcelles
@@ -144,23 +149,32 @@ def test_upload_extracts_multiple_coordinate_groups_into_distinct_parcels(tmp_pa
     client = TestClient(app)
     content = b"%PDF-1.4 multi parcel plan"
 
-    response = client.post(
+    upload = client.post(
         "/api/projects/project-1/documents",
         files={"file": ("plan.pdf", content, "application/pdf")},
     )
+    assert upload.status_code == 201
+    document_id = upload.json()["id"]
+    # L'upload ne pose AUCUNE parcelle.
+    assert session.levees == []
+    assert session.parcels == []
 
-    assert response.status_code == 201
+    ocr = client.post(f"/api/projects/project-1/documents/{document_id}/ocr")
+    assert ocr.status_code == 200
+    body = ocr.json()
+    assert [p["label"] for p in body["parsed_parcels"]] == ["Parcelle A", "Parcelle B"]
+    assert body["detected_crs"] == "EPSG_32631"
+
     assert len(session.levees) == 1
     assert session.levees[0]["project_id"] == "project-1"
-    assert session.levees[0]["source_document_id"] == response.json()["id"]
+    assert session.levees[0]["source_document_id"] == document_id
     assert [parcel["label"] for parcel in session.parcels] == ["Parcelle A", "Parcelle B"]
     assert [parcel["declared_surface_m2"] for parcel in session.parcels] == [549, 210]
     assert {parcel["levee_id"] for parcel in session.parcels} == {session.levees[0]["id"]}
     assert len(session.survey_points) == 8
     assert {point["parcel_id"] for point in session.survey_points[:4]} == {session.parcels[0]["id"]}
     assert {point["parcel_id"] for point in session.survey_points[4:]} == {session.parcels[1]["id"]}
-    assert session.committed is True
-    assert session.rolled_back is False
+    assert session.project_status == "OCR_EXTRACTED"
 
 
 def test_upload_rejects_unsupported_mime_without_database_insert(tmp_path, monkeypatch):
