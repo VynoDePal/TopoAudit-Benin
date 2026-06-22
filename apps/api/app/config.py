@@ -20,8 +20,17 @@ class Settings(BaseSettings):
     gemini_api_endpoint: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_model: str = "gemma-4-31b-it"
     ocr_rate_limit_per_minute: int = 10
+    # Sécurité (P1.1) : secret JWT + mode démo sans auth (jamais en production).
+    jwt_secret: str = "dev-insecure-change-me"
+    jwt_expires_seconds: int = Field(default=86400, gt=0)
+    demo_local: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @property
+    def demo_local_enabled(self) -> bool:
+        """Mode démo sans auth : actif uniquement hors production."""
+        return self.demo_local and self.app_env != "production"
 
     @model_validator(mode="after")
     def register_configured_secrets_for_log_redaction(self) -> "Settings":
@@ -29,6 +38,7 @@ class Settings(BaseSettings):
             [
                 self.azure_document_intelligence_key,
                 self.gemini_api_key,
+                self.jwt_secret,
             ]
         )
         install_sensitive_data_filter()

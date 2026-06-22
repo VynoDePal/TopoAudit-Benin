@@ -52,12 +52,23 @@ def geojson_point_to_wkt_element(point: dict[str, Any], srid: int = 4326) -> WKT
     return WKTElement(f"POINT({float(longitude)} {float(latitude)})", srid=srid)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str | None] = mapped_column(String(32), default=ProjectWorkflowState.UPLOADED.value)
+    # Propriétaire (P1.1) ; nullable pour rétro-compat + mode démo (projets sans owner).
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     documents: Mapped[list["Document"]] = relationship(back_populates="project", cascade="all, delete-orphan")

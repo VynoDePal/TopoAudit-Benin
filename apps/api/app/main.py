@@ -19,6 +19,15 @@ from app.crs import (
 )
 from app.database import get_db, get_engine
 from app.geometry_engine import PolygonValidationResult, validate_polygon
+from app.auth import (
+    AuthUser,
+    authenticate_user,
+    authorized_project_user,
+    create_token,
+    ensure_project_access,
+    get_current_user,
+    register_user,
+)
 from app.extraction_score import extraction_score_calculator
 from app.models import Base, Project
 from app.ocr import (
@@ -57,10 +66,12 @@ async def lifespan(_app: "FastAPI"):
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     ensure_audit_inputs_table(engine)
-    # Migration idempotente : un point dont le CRS n'est pas géoréférencé n'a pas de
-    # géométrie WGS84 → la colonne geom doit être nullable (bases créées avant P0.2).
+    # Migrations idempotentes (bases créées avant P0.2/P1.1) :
+    #  - geom nullable (point sans CRS géoréférencé) ;
+    #  - colonne owner_id sur projects (propriété SaaS).
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE survey_points ALTER COLUMN geom DROP NOT NULL"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id VARCHAR(36)"))
     # Log de démarrage : provider OCR + modèle actifs (le filtre anti-secret installé par
     # app.config garantit qu'aucune clé n'apparaît dans les logs).
     # logger "uvicorn.error" : visible dans la sortie de démarrage (le logger applicatif
@@ -170,14 +181,42 @@ class ProjectCreateResponse(BaseModel):
     status: str | None
 
 
+class AuthRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255, examples=["arpenteur@example.bj"])
+    password: str = Field(min_length=8, max_length=128)
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user_id: str
+    email: str
+
+
+@app.post("/api/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED, tags=["auth"])
+def register(payload: AuthRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    user = register_user(payload.email, payload.password, db)
+    return AuthResponse(token=create_token(user_id=user.id, email=user.email), user_id=user.id, email=user.email)
+
+
+@app.post("/api/auth/login", response_model=AuthResponse, tags=["auth"])
+def login(payload: AuthRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    user = authenticate_user(payload.email, payload.password, db)
+    return AuthResponse(token=create_token(user_id=user.id, email=user.email), user_id=user.id, email=user.email)
+
+
 @app.post(
     "/api/projects",
     response_model=ProjectCreateResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["projects"],
 )
-def create_project(payload: ProjectCreateRequest, db: Session = Depends(get_db)) -> ProjectCreateResponse:
-    project = Project(name=payload.name)
+def create_project(
+    payload: ProjectCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: AuthUser | None = Depends(get_current_user),
+) -> ProjectCreateResponse:
+    # owner_id : l'utilisateur authentifié (None en mode démo local).
+    project = Project(name=payload.name, owner_id=current_user.id if current_user else None)
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -194,12 +233,17 @@ def upload_project_document(
     project_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
 ) -> DocumentUploadResponse:
     return create_document_from_upload(project_id, file, db)
 
 
 @app.get("/api/projects/{project_id}/workflow", response_model=ProjectWorkflowResponse, tags=["workflow"])
-def get_project_workflow(project_id: str, db: Session = Depends(get_db)) -> ProjectWorkflowResponse:
+def get_project_workflow(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
+) -> ProjectWorkflowResponse:
     state = get_project_state(project_id, db)
     return ProjectWorkflowResponse(project_id=project_id, state=state)
 
@@ -264,7 +308,11 @@ def _read_project_parcels(project_id: str, db: Session) -> ParcelsResponse:
 
 
 @app.get("/api/projects/{project_id}/parcels", response_model=ParcelsResponse, tags=["parcels"])
-def get_project_parcels(project_id: str, db: Session = Depends(get_db)) -> ParcelsResponse:
+def get_project_parcels(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
+) -> ParcelsResponse:
     return _read_project_parcels(project_id, db)
 
 
@@ -273,6 +321,7 @@ def replace_project_parcels(
     project_id: str,
     payload: ParcelsResponse,
     db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
 ) -> ParcelsResponse:
     # Persiste les corrections humaines : on remplace les parcelles du projet par celles
     # fournies (l'audit lit ces tables). geom WGS84 dérivé du CRS source de chaque parcelle.
@@ -332,6 +381,7 @@ def validate_project(
     project_id: str,
     payload: ProjectValidationRequest | None = None,
     db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
 ) -> ProjectValidationResponse:
     # La transition (donc le contrôle d'état) D'ABORD : un appel sans corps reste
     # valide (rétro-compat) et un mauvais état renvoie 409 avant tout calcul.
@@ -355,7 +405,11 @@ def validate_project(
 
 
 @app.post("/api/projects/{project_id}/audit", response_model=AuditResponse, tags=["audits"])
-def run_project_audit(project_id: str, db: Session = Depends(get_db)) -> AuditResponse:
+def run_project_audit(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
+) -> AuditResponse:
     return create_project_audit(project_id, db)
 
 
@@ -365,7 +419,11 @@ def run_project_audit(project_id: str, db: Session = Depends(get_db)) -> AuditRe
     responses={200: {"content": {"application/pdf": {}}}},
     tags=["reports"],
 )
-def download_project_audit_report(project_id: str, db: Session = Depends(get_db)) -> Response:
+def download_project_audit_report(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
+) -> Response:
     audit = create_project_audit(project_id, db)
     pdf_bytes = generate_audit_report_pdf(audit)
     headers = {"Content-Disposition": f'attachment; filename="topoaudit-{project_id}-report.pdf"'}
@@ -445,6 +503,7 @@ def run_document_ocr(
     document_id: str,
     request: Request,
     db: Session = Depends(get_db),
+    _user: AuthUser | None = Depends(authorized_project_user),
 ) -> OcrResult:
     enforce_ocr_rate_limit(request)
     return _run_scoped_document_ocr(project_id, document_id, db)
@@ -455,8 +514,21 @@ def run_document_ocr_from_body(
     payload: OcrRequest,
     request: Request,
     db: Session = Depends(get_db),
+    current_user: AuthUser | None = Depends(get_current_user),
 ) -> OcrResult:
     enforce_ocr_rate_limit(request)
+    # project_id provient du corps : on vérifie la propriété manuellement.
+    row = (
+        db.execute(
+            text("SELECT owner_id FROM projects WHERE id = :project_id"),
+            {"project_id": payload.project_id},
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    ensure_project_access(row.get("owner_id"), current_user)
     return _run_scoped_document_ocr(payload.project_id, payload.document_id, db)
 
 
