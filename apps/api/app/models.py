@@ -125,7 +125,9 @@ class SurveyPoint(Base):
     source_x: Mapped[float | None]
     source_y: Mapped[float | None]
     confidence: Mapped[float | None] = mapped_column(Float)
-    geom: Mapped[Any] = mapped_column(_geometry_column("POINT"), nullable=False)
+    # Nullable : un point dont le CRS n'est PAS géoréférencé (LOCAL_ONLY/UNKNOWN/
+    # NEEDS_GEOREFERENCING) n'a pas de géométrie WGS84 — on conserve source_x/source_y.
+    geom: Mapped[Any | None] = mapped_column(_geometry_column("POINT"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     parcel: Mapped[Parcel] = relationship(back_populates="points")

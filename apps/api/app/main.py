@@ -46,6 +46,10 @@ async def lifespan(_app: "FastAPI"):
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     ensure_audit_inputs_table(engine)
+    # Migration idempotente : un point dont le CRS n'est pas géoréférencé n'a pas de
+    # géométrie WGS84 → la colonne geom doit être nullable (bases créées avant P0.2).
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE survey_points ALTER COLUMN geom DROP NOT NULL"))
     # Log de démarrage : provider OCR + modèle actifs (le filtre anti-secret installé par
     # app.config garantit qu'aucune clé n'apparaît dans les logs).
     # logger "uvicorn.error" : visible dans la sortie de démarrage (le logger applicatif

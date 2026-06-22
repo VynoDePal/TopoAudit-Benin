@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.crs import transform_coordinate_to_wgs84
+from app.crs_detection import detect_crs
 from app.ocr import extract_text_from_document
 from app.surface_parser import parse_surface_to_m2
 from app.workflow import mark_project_ocr_extracted, mark_project_uploaded
@@ -153,6 +154,15 @@ def _insert_extracted_parcels(
     if not parcels:
         return
 
+    # Détection du CRS à partir du texte OCR + de la plausibilité géographique des
+    # coordonnées. On ne transforme vers WGS84 que si le CRS est réellement
+    # géoréférencé (EPSG:32631/4326) ; sinon (LOCAL_ONLY/UNKNOWN/NEEDS_GEOREFERENCING)
+    # on conserve les coordonnées source SANS géométrie WGS84 inventée.
+    all_coordinates = [[point.x, point.y] for parcel in parcels for point in parcel.points]
+    detection = detect_crs(text=ocr_text, coordinates=all_coordinates)
+    stored_crs = detection.epsg if detection.is_transformable else detection.status.value
+    transformable = detection.is_transformable
+
     levee_id = str(uuid4())
     created_at = datetime.now(UTC)
     db.execute(
@@ -167,7 +177,7 @@ def _insert_extracted_parcels(
             "project_id": project_id,
             "label": "Levée extraite OCR",
             "source_document_id": document_id,
-            "detected_crs": "EPSG:32631",
+            "detected_crs": stored_crs,
             "created_at": created_at,
         },
     )
@@ -187,7 +197,7 @@ def _insert_extracted_parcels(
                 "levee_id": levee_id,
                 "label": parcel.label,
                 "declared_surface_m2": parcel.declared_surface_m2,
-                "detected_crs": "EPSG:32631",
+                "detected_crs": stored_crs,
                 "created_at": created_at,
             },
         )
@@ -195,28 +205,34 @@ def _insert_extracted_parcels(
         # reconstruire un polygone NON auto-intersecté à l'audit (sans lui, le tri par
         # label est alphabétique : B1, B10, B11, …, B2 → polygone en désordre → invalide).
         for point_index, point in enumerate(parcel.points):
-            longitude, latitude = transform_coordinate_to_wgs84(point.x, point.y)
+            params = {
+                "id": str(uuid4()),
+                "parcel_id": parcel_id,
+                "label": point.label,
+                "point_index": point_index,
+                "source_x": point.x,
+                "source_y": point.y,
+                "confidence": None,
+                "created_at": created_at,
+            }
+            if transformable:
+                longitude, latitude = transform_coordinate_to_wgs84(point.x, point.y, stored_crs)
+                params["longitude"] = longitude
+                params["latitude"] = latitude
+                geom_sql = "ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326)"
+            else:
+                # CRS non géoréférencé : pas de géométrie WGS84 (coordonnées source conservées).
+                geom_sql = "NULL"
             db.execute(
                 text(
-                    """
+                    f"""
                     INSERT INTO survey_points
                         (id, parcel_id, label, point_index, source_x, source_y, confidence, geom, created_at)
                     VALUES (:id, :parcel_id, :label, :point_index, :source_x, :source_y, :confidence,
-                            ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326), :created_at)
+                            {geom_sql}, :created_at)
                     """
                 ),
-                {
-                    "id": str(uuid4()),
-                    "parcel_id": parcel_id,
-                    "label": point.label,
-                    "point_index": point_index,
-                    "source_x": point.x,
-                    "source_y": point.y,
-                    "longitude": longitude,
-                    "latitude": latitude,
-                    "confidence": None,
-                    "created_at": created_at,
-                },
+                params,
             )
 
 
