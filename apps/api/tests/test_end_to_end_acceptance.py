@@ -64,6 +64,56 @@ class FakeEndToEndSession:
         self.committed = True
 
 
+
+class FakeUploadToAuditSession(FakeEndToEndSession):
+    def __init__(self) -> None:
+        super().__init__(status="UPLOADED")
+        self.inserted_document: dict[str, object] | None = None
+        self.levees: list[dict[str, object]] = []
+        self.parcels: list[dict[str, object]] = []
+        self.survey_points: list[dict[str, object]] = []
+        self.rolled_back = False
+
+    def execute(self, statement, params: dict[str, object]):
+        sql = str(statement)
+        if "FROM parcels p" in sql:
+            return FakeResult(rows=self._parcel_audit_rows())
+        if "INSERT INTO documents" in sql:
+            self.inserted_document = dict(params)
+            return FakeResult(None)
+        if "INSERT INTO levees" in sql:
+            self.levees.append(dict(params))
+            return FakeResult(None)
+        if "INSERT INTO parcels" in sql:
+            self.parcels.append(dict(params))
+            return FakeResult(None)
+        if "INSERT INTO survey_points" in sql:
+            self.survey_points.append(dict(params))
+            return FakeResult(None)
+        return super().execute(statement, params)
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def _parcel_audit_rows(self) -> list[dict[str, object]]:
+        parcels_by_id = {parcel["id"]: parcel for parcel in self.parcels}
+        rows = []
+        for point in self.survey_points:
+            parcel = parcels_by_id[point["parcel_id"]]
+            rows.append(
+                {
+                    "parcel_id": parcel["id"],
+                    "label": parcel["label"],
+                    "declared_surface_m2": parcel["declared_surface_m2"],
+                    "detected_crs": parcel["detected_crs"],
+                    "source_x": point["source_x"],
+                    "source_y": point["source_y"],
+                    "confidence": point["confidence"],
+                }
+            )
+        return rows
+
+
 def override_db(session: FakeEndToEndSession):
     def _override():
         yield session
@@ -82,6 +132,44 @@ def teardown_function():
 def extract_pdf_text(pdf_bytes: bytes) -> str:
     reader = PdfReader(BytesIO(pdf_bytes))
     return " ".join(page.extract_text() for page in reader.pages)
+
+
+def test_e2e_upload_mock_ocr_validation_and_audit_reuse_extracted_parcels(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.uploads.settings.local_storage_path", str(tmp_path))
+    session = FakeUploadToAuditSession()
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
+    upload_response = client.post(
+        "/api/projects/project-upload-flow/documents",
+        files={"file": ("plan.png", b"\x89PNG\r\n\x1a\nmock image", "image/png")},
+    )
+
+    assert upload_response.status_code == 201
+    assert upload_response.json()["filename"] == "plan.png"
+    assert session.status == "OCR_EXTRACTED"
+    assert session.inserted_document is not None
+    assert len(session.levees) == 1
+    assert [parcel["label"] for parcel in session.parcels] == ["Parcelle A"]
+    assert session.parcels[0]["declared_surface_m2"] == 549
+    assert len(session.survey_points) == 4
+    assert session.rolled_back is False
+
+    validate_response = client.post("/api/projects/project-upload-flow/validate")
+    assert validate_response.status_code == 200
+    assert validate_response.json()["state"] == "VALIDATED"
+
+    audit_response = client.post("/api/projects/project-upload-flow/audit")
+    assert audit_response.status_code == 200
+    payload = audit_response.json()
+    assert payload["state"] == "AUDITED"
+    assert payload["risk_level"] == "high"
+    assert payload["technical_score"] == 48
+    assert len(payload["parcels"]) == 1
+    assert payload["parcels"][0]["label"] == "Parcelle A"
+    assert payload["parcels"][0]["declared_surface_m2"] == 549
+    assert payload["parcels"][0]["calculated_surface_m2"] is not None
+    assert "Écart élevé" in payload["warnings"][1]
 
 
 def test_e2e_clear_wgs84_image_runs_ocr_validation_audit_and_pdf():
