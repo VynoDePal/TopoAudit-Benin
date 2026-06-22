@@ -259,7 +259,9 @@ class ParcelIO(BaseModel):
     id: str | None = None
     label: str
     declared_surface_m2: float | None = None
-    detected_crs: str = "EPSG:32631"
+    # Pas de défaut silencieux EPSG:32631 : un CRS non déterminé reste UNKNOWN_CRS
+    # (pas de transformation ni de fond satellite tant qu'il n'est pas confirmé).
+    detected_crs: str = "UNKNOWN_CRS"
     points: list[ParcelPointIO] = Field(default_factory=list)
 
 
@@ -296,7 +298,7 @@ def _read_project_parcels(project_id: str, db: Session) -> ParcelsResponse:
                 id=pid,
                 label=str(row["label"]),
                 declared_surface_m2=row["declared_surface_m2"],
-                detected_crs=str(row["detected_crs"] or "EPSG:32631"),
+                detected_crs=str(row["detected_crs"] or "UNKNOWN_CRS"),
                 points=[],
             )
             ordered.append(pid)

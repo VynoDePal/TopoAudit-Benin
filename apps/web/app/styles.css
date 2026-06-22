@@ -57,3 +57,35 @@ button:focus {
     display: none !important;
   }
 }
+
+/* Carte MapLibre (ParcelMap) intégrée au workflow principal */
+.map-panel {
+  display: flex;
+  flex-direction: column;
+}
+.map-copy {
+  padding: 12px 15px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+.map-copy .eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin: 0 0 4px;
+}
+.map-copy h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.map-copy p {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b7280;
+  margin: 0;
+}
+.map-container {
+  width: 100%;
+  height: 440px;
+}

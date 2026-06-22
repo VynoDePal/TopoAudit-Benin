@@ -75,10 +75,12 @@ def detect_crs_from_text(text: str | None) -> CRSDetectionResult | None:
     if re.search(r"\bUTM\b\s*(ZONE\s*)?31", upper):
         return CRSDetectionResult(CRSStatus.EPSG_32631, "EPSG:32631", 0.85, "Mention UTM zone 31N")
 
-    # WGS84 / ITRF seuls (sans UTM) → coordonnées géographiques.
-    if "WGS84" in upper.replace(" ", "") or "ITRF" in upper:
-        return CRSDetectionResult(CRSStatus.EPSG_4326, "EPSG:4326", 0.6, "Mention WGS84/ITRF (géographique)")
+    # Mentions GÉOGRAPHIQUES explicites (lon/lat, degrés) → EPSG:4326.
+    if re.search(r"LONGITUDE|LATITUDE|\bLAT\b|\bLON\b|DEGR|OGRAPHI", upper):
+        return CRSDetectionResult(CRSStatus.EPSG_4326, "EPSG:4326", 0.8, "Mention géographique explicite (lon/lat)")
 
+    # « WGS84 » / « ITRF » SEULS = datum, PAS une projection → ambigu : on ne force rien
+    # (surtout pas EPSG:4326). Les coordonnées décideront (anti fausse-confiance).
     return None
 
 
@@ -130,13 +132,17 @@ def detect_crs(
     text_result = detect_crs_from_text(text)
     coord_result = detect_crs_from_coordinates(coordinates) if coordinates else None
 
-    # Une mention texte transformable prime — sauf si les coordonnées révèlent une
-    # inversion d'axes (alors on signale qu'un géoréférencement/contrôle est requis).
+    # Règle métier : des coordonnées clairement UTM 31N (Bénin) l'emportent — même si le
+    # texte mentionne WGS84/géographique (souvent juste le datum). Anti fausse-confiance.
+    if coord_result and coord_result.status == CRSStatus.EPSG_32631:
+        return coord_result
+    # Inversion d'axes détectée sur les coordonnées → géoréférencement requis.
+    if coord_result and coord_result.status == CRSStatus.NEEDS_GEOREFERENCING:
+        return coord_result
+    # Mention texte transformable EXPLICITE (EPSG / UTM 31 / géographique lon-lat).
     if text_result and text_result.is_transformable:
-        if coord_result and coord_result.status == CRSStatus.NEEDS_GEOREFERENCING:
-            return coord_result
         return text_result
-
+    # Sinon, ce que disent les coordonnées (lon/lat Bénin → EPSG_4326, local, etc.).
     if coord_result and coord_result.status != CRSStatus.UNKNOWN_CRS:
         return coord_result
     if text_result:

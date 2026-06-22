@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: topoaudit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/topoaudit_test
+      APP_ENV: local
+      OCR_PROVIDER: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Dépendances natives de WeasyPrint (PDF) + client PostgreSQL — sinon `import
+      # weasyprint` plante et toute la suite tombe.
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpq5 libglib2.0-0 libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+            libgdk-pixbuf-2.0-0 libharfbuzz0b libffi8 fonts-liberation
+      - name: Install Python deps
+        working-directory: apps/api
+        run: pip install -r requirements.txt
+      - name: Run pytest
+        working-directory: apps/api
+        run: PYTHONPATH=. pytest -q
+
+  frontend:
+    name: Frontend (test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        working-directory: apps/web
+        run: npm install
+      - name: Test
+        working-directory: apps/web
+        run: npm test
+      - name: Build
+        working-directory: apps/web
+        run: npm run build
+
+  openapi:
+    name: OpenAPI sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpq5 libglib2.0-0 libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+            libgdk-pixbuf-2.0-0 libharfbuzz0b libffi8 fonts-liberation
+      - name: Install Python deps
+        working-directory: apps/api
+        run: pip install -r requirements.txt
+      - name: Regenerate OpenAPI
+        working-directory: apps/api
+        run: PYTHONPATH=. python scripts/generate_openapi.py
+      - name: Fail if docs/openapi.json is out of date
+        run: git diff --exit-code docs/openapi.json

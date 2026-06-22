@@ -3,7 +3,10 @@
 // Dashboard TopoAudit Bénin — port fidèle de design/TopoAudit Bénin.dc.html
 // (top bar + sidebar workflow + 4 étapes intake→validate→audit→report, 3 thèmes, FR/EN).
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import type { FeatureCollection, Polygon } from "geojson";
+import proj4 from "proj4";
 
+import ParcelMap from "./ParcelMap";
 import {
   confTone,
   DEFAULT_PARCELS,
@@ -22,6 +25,14 @@ import {
 
 const MONO = "'IBM Plex Mono', monospace";
 type S = Record<string, string>;
+
+// Transformation UTM 31N → WGS84 (lon/lat) pour la carte MapLibre, uniquement si le
+// CRS est géoréférencé. EPSG:4326 = déjà en lon/lat (pas de transformation).
+const UTM_31N_PROJ = "+proj=utm +zone=31 +datum=WGS84 +units=m +no_defs";
+const toWgs84 = (x: number, y: number, crs: string): [number, number] =>
+  crs === "EPSG:4326" || crs === "EPSG_4326"
+    ? [x, y]
+    : (proj4(UTM_31N_PROJ, "WGS84", [x, y]) as [number, number]);
 
 // Réponse d'audit du backend (source de vérité, identique au PDF).
 type AuditApiResponse = {
@@ -122,7 +133,7 @@ export default function TopoAuditDashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [auditResult, setAuditResult] = useState<AuditApiResponse | null>(null);
   // Métadonnées OCR (P0.3) : provider réel vs mock + CRS détecté, pour affichage explicite.
-  const [ocrInfo, setOcrInfo] = useState<{ isMock: boolean; provider: string; crs: string } | null>(null);
+  const [ocrInfo, setOcrInfo] = useState<{ isMock: boolean; provider: string; crs: string; scoreStatus: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const t = THEMES[themeKey];
@@ -137,6 +148,26 @@ export default function TopoAuditDashboard() {
   // → pas de fond satellite, vue locale. En l'absence d'OCR (démo) on suppose géoréférencé.
   const isGeoreferenced = !ocrInfo || ocrInfo.crs === "EPSG_32631" || ocrInfo.crs === "EPSG_4326";
   useEffect(() => { if (!isGeoreferenced && mapSat) setMapSat(false); }, [isGeoreferenced, mapSat]);
+  // GeoJSON EPSG:4326 des parcelles pour MapLibre (carte géoréférencée réelle), construit
+  // par transformation des coordonnées source — seulement si le CRS est transformable.
+  const geoParcels = useMemo<FeatureCollection<Polygon>>(() => {
+    const confirmed = parcels.filter((p) => p.confirmed);
+    const src = confirmed.length ? confirmed : parcels;
+    return {
+      type: "FeatureCollection",
+      features: src
+        .filter((p) => p.points.length >= 3)
+        .map((p) => {
+          const ring = p.points.map((pt) => toWgs84(num(pt.x), num(pt.y), p.crs));
+          if (ring.length > 0) ring.push(ring[0]);
+          return {
+            type: "Feature" as const,
+            properties: { name: p.name, risk: "Modéré" },
+            geometry: { type: "Polygon" as const, coordinates: [ring] },
+          };
+        }),
+    };
+  }, [parcels]);
 
   // ---- couche API (backend FastAPI réel) ----
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
@@ -155,7 +186,7 @@ export default function TopoAuditDashboard() {
       name: p.label ?? `Parcelle ${i + 1}`,
       declaredRaw: "",
       declaredM2: p.declared_surface_m2 != null ? String(p.declared_surface_m2) : "",
-      crs: p.detected_crs ?? "EPSG:32631",
+      crs: p.detected_crs ?? "UNKNOWN_CRS",
       confirmed: false,
       points: (p.points ?? []).map((pt: any) => ({ label: pt.label, x: String(pt.x), y: String(pt.y), confidence: pt.confidence ?? 0 })),
     }));
@@ -171,7 +202,7 @@ export default function TopoAuditDashboard() {
   const crsStatusToDisplay = (status?: string): string => {
     if (status === "EPSG_32631") return "EPSG:32631";
     if (status === "EPSG_4326") return "EPSG:4326";
-    return status ?? "EPSG:32631";
+    return status ?? "UNKNOWN_CRS";
   };
 
   // Intake → OCR réel : crée le projet, uploade le plan, lance l'OCR, récupère les bornes.
@@ -189,7 +220,7 @@ export default function TopoAuditDashboard() {
       const upDoc = await up.json();
       // P0.3 : l'OCR est une étape EXPLICITE (l'upload ne fait que stocker le fichier).
       const ocr = await apiJson("POST", `/projects/${proj.id}/documents/${upDoc.id}/ocr`);
-      setOcrInfo({ isMock: !!ocr.is_mock_result, provider: ocr.actual_provider ?? "?", crs: ocr.detected_crs ?? "UNKNOWN_CRS" });
+      setOcrInfo({ isMock: !!ocr.is_mock_result, provider: ocr.actual_provider ?? "?", crs: ocr.detected_crs ?? "UNKNOWN_CRS", scoreStatus: ocr.extraction_score_status ?? "needs_human_validation" });
       const crsForParcels = crsStatusToDisplay(ocr.detected_crs);
       const mapped = mapFromApi((ocr.parsed_parcels ?? []).map((p: any) => ({ ...p, detected_crs: crsForParcels })));
       if (mapped.length) {
@@ -303,12 +334,12 @@ export default function TopoAuditDashboard() {
                 { label: s.d_parcels, value: String(parcels.length), mono: MONO },
                 { label: s.d_bornes_total, value: String(totalBornes), mono: MONO },
               ]
-            : [{ label: s.d_crs, value: `EPSG:32631 · ${s.d_pending}`, mono: MONO }]),
+            : [{ label: s.d_crs, value: s.d_pending, mono: MONO }]),
         ]
       : [
           { label: s.d_file, value: s.d_nofile, mono: "inherit" },
-          { label: s.d_geo, value: "WGS 84 / UTM 31N", mono: "inherit" },
-          { label: s.d_crs, value: "EPSG:32631", mono: MONO },
+          { label: s.d_geo, value: "—", mono: "inherit" },
+          { label: s.d_crs, value: s.d_pending, mono: MONO },
         ];
 
     const themeList = (Object.keys(THEMES) as ThemeKey[]).map((k) => {
@@ -611,12 +642,22 @@ export default function TopoAuditDashboard() {
                   <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: t.sub, maxWidth: 680 }}>{s.val_sub}</p>
                 </div>
                 {ocrInfo && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 16 }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, background: ocrInfo.isMock ? "#fef3c7" : "#dcfce7", color: ocrInfo.isMock ? "#92400e" : "#166534", border: `1px solid ${ocrInfo.isMock ? "#f59e0b" : "#22c55e"}` }}>
-                      {ocrInfo.isMock ? (lang === "fr" ? "⚠ Mock OCR (démo)" : "⚠ Mock OCR (demo)") : (lang === "fr" ? "✓ OCR réel" : "✓ Real OCR")}
-                      {` · ${ocrInfo.provider}`}
-                    </span>
-                    <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>CRS : {ocrInfo.crs}</span>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, background: ocrInfo.isMock ? "#fef3c7" : "#dcfce7", color: ocrInfo.isMock ? "#92400e" : "#166534", border: `1px solid ${ocrInfo.isMock ? "#f59e0b" : "#22c55e"}` }}>
+                        {ocrInfo.isMock ? (lang === "fr" ? "⚠ Mock OCR (démo)" : "⚠ Mock OCR (demo)") : (lang === "fr" ? "✓ OCR réel" : "✓ Real OCR")}
+                        {` · ${ocrInfo.provider}`}
+                      </span>
+                      <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>CRS : {ocrInfo.crs}</span>
+                      <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>{lang === "fr" ? "Statut extraction" : "Extraction status"} : {ocrInfo.scoreStatus}</span>
+                    </div>
+                    {ocrInfo.scoreStatus === "needs_human_validation" && (
+                      <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.45, background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b" }}>
+                        {lang === "fr"
+                          ? "⚠ Validation humaine requise : aucun score d'extraction fiable. Vérifiez chaque borne et le CRS avant de lancer l'audit."
+                          : "⚠ Human validation required: no reliable extraction score. Check every corner and the CRS before running the audit."}
+                      </div>
+                    )}
                   </div>
                 )}
                 <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 18, alignItems: "start" }}>
@@ -812,6 +853,14 @@ export default function TopoAuditDashboard() {
                   </button>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1.15fr 1fr", gap: 18, alignItems: "start" }}>
+                  {isGeoreferenced ? (
+                  <section style={{ ...panelCard, overflow: "hidden" }}>
+                    <ParcelMap parcels={geoParcels} title={s.map_title} description={lang === "fr" ? "Carte géoréférencée (MapLibre · fond OSM + satellite Esri)." : "Georeferenced map (MapLibre · OSM + Esri satellite)."} />
+                    <div style={{ padding: "8px 12px", fontSize: 11.5, lineHeight: 1.45, color: "#92400e", background: "#fef3c7", borderTop: "1px solid #f59e0b" }}>
+                      {lang === "fr" ? "Fond satellite indicatif, non référence cadastrale." : "Indicative satellite background, not a cadastral reference."}
+                    </div>
+                  </section>
+                  ) : (
                   <section style={{ ...panelCard, overflow: "hidden" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 15px", borderBottom: `1px solid ${t.line}` }}>
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{s.map_title}</span>
@@ -840,6 +889,7 @@ export default function TopoAuditDashboard() {
                       {!isGeoreferenced && <div style={{ position: "absolute", left: 12, top: 12, fontFamily: MONO, fontSize: 10, color: "#92400e", background: "#fef3c7", padding: "5px 9px", borderRadius: 6, border: "1px solid #f59e0b", maxWidth: 300, lineHeight: 1.4 }}>{s.map_local}</div>}
                     </div>
                   </section>
+                  )}
                   <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <div style={{ ...panelCard, padding: 18 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
