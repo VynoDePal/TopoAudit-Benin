@@ -133,6 +133,10 @@ export default function TopoAuditDashboard() {
   useEffect(() => () => { if (filePreview) URL.revokeObjectURL(filePreview); }, [filePreview]);
   // Toute (re)définition des parcelles (upload, édition) invalide l'audit affiché.
   useEffect(() => { setAuditResult(null); }, [parcels]);
+  // P1.2 : CRS géoréférencé (EPSG 32631/4326) ? Sinon (LOCAL_ONLY/UNKNOWN/NEEDS_GEOREF)
+  // → pas de fond satellite, vue locale. En l'absence d'OCR (démo) on suppose géoréférencé.
+  const isGeoreferenced = !ocrInfo || ocrInfo.crs === "EPSG_32631" || ocrInfo.crs === "EPSG_4326";
+  useEffect(() => { if (!isGeoreferenced && mapSat) setMapSat(false); }, [isGeoreferenced, mapSat]);
 
   // ---- couche API (backend FastAPI réel) ----
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
@@ -813,7 +817,7 @@ export default function TopoAuditDashboard() {
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{s.map_title}</span>
                       <div style={{ display: "flex", background: t.panel2, border: `1px solid ${t.line}`, borderRadius: 8, overflow: "hidden", fontSize: 11.5, fontWeight: 600 }}>
                         <button onClick={() => setMapSat(false)} style={{ border: "none", cursor: "pointer", padding: "6px 13px", background: !mapSat ? t.accent : "transparent", color: !mapSat ? t.accentInk : t.sub }}>{s.map_plan}</button>
-                        <button onClick={() => setMapSat(true)} style={{ border: "none", cursor: "pointer", padding: "6px 13px", background: mapSat ? t.accent : "transparent", color: mapSat ? t.accentInk : t.sub }}>{s.map_sat}</button>
+                        <button onClick={() => isGeoreferenced && setMapSat(true)} disabled={!isGeoreferenced} title={!isGeoreferenced ? s.map_local : undefined} style={{ border: "none", cursor: isGeoreferenced ? "pointer" : "not-allowed", padding: "6px 13px", background: mapSat ? t.accent : "transparent", color: mapSat ? t.accentInk : t.sub, opacity: isGeoreferenced ? 1 : 0.45 }}>{s.map_sat}</button>
                       </div>
                     </div>
                     <div style={{ position: "relative", background: view.map.bg }}>
@@ -833,6 +837,7 @@ export default function TopoAuditDashboard() {
                         <g transform="translate(20,398)"><rect x="0" y="-5" width={view.map.scaleLen} height="5" fill={view.map.ink} /><rect x="0" y="-5" width={view.map.scaleHalf} height="5" fill={view.map.bg} stroke={view.map.ink} strokeWidth="0.8" /><text x="0" y="-9" fontFamily={MONO} fontSize="9" fill={view.map.ink}>0</text><text x={view.map.scaleLen} y="-9" fontFamily={MONO} fontSize="9" fill={view.map.ink} textAnchor="end">{view.map.scaleLabel}</text></g>
                       </svg>
                       {view.map.sat && <div style={{ position: "absolute", left: 12, top: 12, fontFamily: MONO, fontSize: 10, color: view.map.ink, background: view.map.bg, padding: "5px 9px", borderRadius: 6, border: `1px solid ${view.map.gridColor}`, maxWidth: 280, lineHeight: 1.4 }}>{s.sat_note}</div>}
+                      {!isGeoreferenced && <div style={{ position: "absolute", left: 12, top: 12, fontFamily: MONO, fontSize: 10, color: "#92400e", background: "#fef3c7", padding: "5px 9px", borderRadius: 6, border: "1px solid #f59e0b", maxWidth: 300, lineHeight: 1.4 }}>{s.map_local}</div>}
                     </div>
                   </section>
                   <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
