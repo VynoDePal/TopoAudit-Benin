@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated
@@ -45,6 +46,16 @@ async def lifespan(_app: "FastAPI"):
     engine = get_engine()
     Base.metadata.create_all(bind=engine)
     ensure_audit_inputs_table(engine)
+    # Log de démarrage : provider OCR + modèle actifs (le filtre anti-secret installé par
+    # app.config garantit qu'aucune clé n'apparaît dans les logs).
+    # logger "uvicorn.error" : visible dans la sortie de démarrage (le logger applicatif
+    # par défaut hériterait du niveau WARNING et l'INFO serait masqué).
+    logging.getLogger("uvicorn.error").info(
+        "Démarrage TopoAudit | APP_ENV=%s | OCR_PROVIDER=%s | modèle vision=%s",
+        settings.app_env,
+        settings.ocr_provider,
+        settings.gemini_model,
+    )
     yield
 
 
