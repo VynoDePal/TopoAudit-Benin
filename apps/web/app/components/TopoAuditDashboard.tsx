@@ -7,6 +7,8 @@ import type { FeatureCollection, Polygon } from "geojson";
 import proj4 from "proj4";
 
 import ParcelMap from "./ParcelMap";
+import { authHeaders, loadToken, saveToken, withAuth } from "../lib/authClient";
+import { extractionScoreText, isExtractionScoreNull } from "../lib/auditFormat";
 import {
   confTone,
   DEFAULT_PARCELS,
@@ -26,17 +28,29 @@ import {
 const MONO = "'IBM Plex Mono', monospace";
 type S = Record<string, string>;
 
-// Transformation UTM 31N → WGS84 (lon/lat) pour la carte MapLibre, uniquement si le
-// CRS est géoréférencé. EPSG:4326 = déjà en lon/lat (pas de transformation).
-const UTM_31N_PROJ = "+proj=utm +zone=31 +datum=WGS84 +units=m +no_defs";
-const toWgs84 = (x: number, y: number, crs: string): [number, number] =>
-  crs === "EPSG:4326" || crs === "EPSG_4326"
-    ? [x, y]
-    : (proj4(UTM_31N_PROJ, "WGS84", [x, y]) as [number, number]);
+// Seuls ces CRS sont géoréférencés et transformables vers WGS84. Tout le reste
+// (LOCAL_ONLY, UNKNOWN_CRS, NEEDS_GEOREFERENCING, local, valeur inconnue) est NON
+// transformable — on ne projette JAMAIS implicitement un CRS inconnu comme de l'UTM 31N.
+export const TRANSFORMABLE_CRS = new Set(["EPSG:32631", "EPSG_32631", "EPSG:4326", "EPSG_4326"]);
+export const isTransformableCrs = (crs: string | null | undefined): boolean =>
+  !!crs && TRANSFORMABLE_CRS.has(crs);
 
-// Réponse d'audit du backend (source de vérité, identique au PDF).
+// Transformation UTM 31N → WGS84 (lon/lat) pour la carte MapLibre. Lève si le CRS n'est
+// pas transformable (anti fausse-confiance : pas de projection d'un CRS inconnu).
+const UTM_31N_PROJ = "+proj=utm +zone=31 +datum=WGS84 +units=m +no_defs";
+export const toWgs84 = (x: number, y: number, crs: string): [number, number] => {
+  if (!isTransformableCrs(crs)) {
+    throw new Error(`CRS non transformable vers WGS84 : ${crs}`);
+  }
+  if (crs === "EPSG:4326" || crs === "EPSG_4326") return [x, y];
+  return proj4(UTM_31N_PROJ, "WGS84", [x, y]) as [number, number];
+};
+
+// Réponse d'audit du backend (source de vérité, identique au PDF). extraction_score peut
+// être null (validation humaine requise) → ne JAMAIS le convertir implicitement en 0.
 type AuditApiResponse = {
-  extraction_score: number;
+  extraction_score: number | null;
+  extraction_score_status?: string;
   technical_score: number;
   risk_level: string;
   warnings: string[];
@@ -121,6 +135,12 @@ export default function TopoAuditDashboard() {
   const [lang, setLang] = useState<LangKey>("fr");
   const [activeIdx, setActiveIdx] = useState(0);
   const [mapSat, setMapSat] = useState(false);
+  // Auth (P0) : token JWT pour le mode non DEMO_LOCAL ; en mémoire + localStorage.
+  const [token, setToken] = useState<string | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPwd, setAuthPwd] = useState("");
+  useEffect(() => { setToken(loadToken()); }, []);
   const [projectName, setProjectName] = useState("Vérification Abomey-Calavi");
   const [commune, setCommune] = useState("Abomey-Calavi");
   const [notes, setNotes] = useState("Avant achat");
@@ -144,19 +164,22 @@ export default function TopoAuditDashboard() {
   useEffect(() => () => { if (filePreview) URL.revokeObjectURL(filePreview); }, [filePreview]);
   // Toute (re)définition des parcelles (upload, édition) invalide l'audit affiché.
   useEffect(() => { setAuditResult(null); }, [parcels]);
-  // P1.2 : CRS géoréférencé (EPSG 32631/4326) ? Sinon (LOCAL_ONLY/UNKNOWN/NEEDS_GEOREF)
-  // → pas de fond satellite, vue locale. En l'absence d'OCR (démo) on suppose géoréférencé.
-  const isGeoreferenced = !ocrInfo || ocrInfo.crs === "EPSG_32631" || ocrInfo.crs === "EPSG_4326";
+  // Géoréférencé = OCR transformable (s'il y a un OCR) ET toutes les parcelles affichées
+  // ont un CRS transformable. Une seule parcelle non transformable (LOCAL_ONLY/UNKNOWN/
+  // NEEDS_GEOREFERENCING) → pas de fond satellite, vue locale, warning.
+  const ocrTransformable = !ocrInfo || isTransformableCrs(ocrInfo.crs);
+  const parcelsTransformable = parcels.length === 0 || parcels.every((p) => isTransformableCrs(p.crs));
+  const isGeoreferenced = ocrTransformable && parcelsTransformable;
   useEffect(() => { if (!isGeoreferenced && mapSat) setMapSat(false); }, [isGeoreferenced, mapSat]);
   // GeoJSON EPSG:4326 des parcelles pour MapLibre (carte géoréférencée réelle), construit
-  // par transformation des coordonnées source — seulement si le CRS est transformable.
+  // par transformation des coordonnées source — UNIQUEMENT les parcelles transformables.
   const geoParcels = useMemo<FeatureCollection<Polygon>>(() => {
     const confirmed = parcels.filter((p) => p.confirmed);
     const src = confirmed.length ? confirmed : parcels;
     return {
       type: "FeatureCollection",
       features: src
-        .filter((p) => p.points.length >= 3)
+        .filter((p) => p.points.length >= 3 && isTransformableCrs(p.crs))
         .map((p) => {
           const ring = p.points.map((pt) => toWgs84(num(pt.x), num(pt.y), p.crs));
           if (ring.length > 0) ring.push(ring[0]);
@@ -168,13 +191,18 @@ export default function TopoAuditDashboard() {
         }),
     };
   }, [parcels]);
+  // CRS réellement affiché (data-driven, jamais EPSG:32631 codé en dur) : le CRS commun
+  // des parcelles si uniforme, sinon null → « CRS à confirmer ».
+  const displayedCrs =
+    parcels.length > 0 && parcels.every((p) => p.crs === parcels[0].crs) ? parcels[0].crs : null;
 
   // ---- couche API (backend FastAPI réel) ----
   const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
   const apiJson = async (method: string, path: string, body?: unknown) => {
+    const base: Record<string, string> = body !== undefined ? { "Content-Type": "application/json" } : {};
     const res = await fetch(`${apiBaseUrl}${path}`, {
       method,
-      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      headers: withAuth(token, base),
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) throw new Error((await res.text().catch(() => "")) || `${method} ${path} → ${res.status}`);
@@ -205,6 +233,28 @@ export default function TopoAuditDashboard() {
     return status ?? "UNKNOWN_CRS";
   };
 
+  // Auth : connexion/inscription → token JWT (stocké). En mode démo local, on peut
+  // travailler sans token (le backend l'autorise) ; en non-démo, le token est requis.
+  const doAuth = async (mode: "login" | "register") => {
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/auth/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail.trim(), password: authPwd }),
+      });
+      if (!res.ok) throw new Error((await res.text().catch(() => "")) || `${mode} → ${res.status}`);
+      const data = await res.json();
+      setToken(data.token);
+      saveToken(data.token);
+      setAuthOpen(false);
+      setAuthPwd("");
+    } catch (e) {
+      setErrorMsg((lang === "fr" ? "Échec authentification : " : "Auth failed: ") + (e instanceof Error ? e.message : String(e)).slice(0, 160));
+    }
+  };
+  const doLogout = () => { setToken(null); saveToken(null); };
+
   // Intake → OCR réel : crée le projet, uploade le plan, lance l'OCR, récupère les bornes.
   const runOcr = async () => {
     setErrorMsg(null);
@@ -215,7 +265,7 @@ export default function TopoAuditDashboard() {
       setProjectId(proj.id);
       const form = new FormData();
       form.append("file", file);
-      const up = await fetch(`${apiBaseUrl}/projects/${proj.id}/documents`, { method: "POST", body: form });
+      const up = await fetch(`${apiBaseUrl}/projects/${proj.id}/documents`, { method: "POST", body: form, headers: authHeaders(token) });
       if (!up.ok) throw new Error((await up.text().catch(() => "")) || `Upload → ${up.status}`);
       const upDoc = await up.json();
       // P0.3 : l'OCR est une étape EXPLICITE (l'upload ne fait que stocker le fichier).
@@ -262,7 +312,7 @@ export default function TopoAuditDashboard() {
     if (!projectId) { if (typeof window !== "undefined") window.print(); return; }
     setBusy("export");
     try {
-      const res = await fetch(`${apiBaseUrl}/projects/${projectId}/audit/report.pdf`, { method: "POST" });
+      const res = await fetch(`${apiBaseUrl}/projects/${projectId}/audit/report.pdf`, { method: "POST", headers: authHeaders(token) });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `PDF → ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -483,13 +533,17 @@ export default function TopoAuditDashboard() {
       high: { l: s.risk_high, c: t.high, soft: t.highSoft, h: s.hint_high },
     };
     const rk = riskMap[ar.risk_level] ?? { l: s.risk_ins, c: t.faint, soft: t.panel2, h: s.hint_ins };
+    const ocrNull = isExtractionScoreNull(ar.extraction_score);
     return {
       ...view.audit,
       ocrScore: ar.extraction_score,
+      ocrScoreNull: ocrNull,
+      ocrScoreStatus: ar.extraction_score_status,
       techScore: ar.technical_score,
-      ocrColor: sc(ar.extraction_score),
+      ocrColor: ocrNull ? t.faint : sc(ar.extraction_score as number),
       techColor: sc(ar.technical_score),
-      ocrDash: `${((C * ar.extraction_score) / 100).toFixed(1)} ${C.toFixed(1)}`,
+      // Score null → jauge vide (0 dash) ; on n'affichera PAS de valeur numérique.
+      ocrDash: ocrNull ? `0 ${C.toFixed(1)}` : `${((C * (ar.extraction_score as number)) / 100).toFixed(1)} ${C.toFixed(1)}`,
       techDash: `${((C * ar.technical_score) / 100).toFixed(1)} ${C.toFixed(1)}`,
       riskLabel: rk.l,
       riskColor: rk.c,
@@ -541,6 +595,27 @@ export default function TopoAuditDashboard() {
             <button onClick={() => setLang("fr")} style={{ border: "none", cursor: "pointer", padding: "6px 11px", background: lang === "fr" ? t.accent : "transparent", color: lang === "fr" ? t.accentInk : t.sub }}>FR</button>
             <button onClick={() => setLang("en")} style={{ border: "none", cursor: "pointer", padding: "6px 11px", background: lang === "en" ? t.accent : "transparent", color: lang === "en" ? t.accentInk : t.sub }}>EN</button>
           </div>
+          <div style={{ position: "relative" }}>
+            {token ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <span style={{ color: t.low, fontWeight: 600 }}>● {lang === "fr" ? "Connecté" : "Signed in"}</span>
+                <button onClick={doLogout} style={{ border: `1px solid ${t.line}`, background: t.panel2, borderRadius: 8, padding: "5px 10px", fontSize: 11.5, cursor: "pointer", color: t.sub }}>{lang === "fr" ? "Déconnexion" : "Sign out"}</button>
+              </div>
+            ) : (
+              <button onClick={() => setAuthOpen((v) => !v)} style={{ border: `1px solid ${t.line}`, background: t.panel2, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", color: t.ink }}>{lang === "fr" ? "Connexion" : "Sign in"}</button>
+            )}
+            {authOpen && !token && (
+              <div style={{ position: "absolute", right: 0, top: 40, width: 244, background: t.panel, border: `1px solid ${t.line}`, borderRadius: 12, boxShadow: t.shadow, padding: 14, display: "flex", flexDirection: "column", gap: 8, zIndex: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 600 }}>{lang === "fr" ? "Authentification" : "Authentication"}</div>
+                <input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="email" style={{ border: `1px solid ${t.line}`, background: t.panel2, borderRadius: 8, padding: "7px 9px", fontSize: 12.5, color: t.ink }} />
+                <input value={authPwd} onChange={(e) => setAuthPwd(e.target.value)} type="password" placeholder={lang === "fr" ? "mot de passe (8+)" : "password (8+)"} style={{ border: `1px solid ${t.line}`, background: t.panel2, borderRadius: 8, padding: "7px 9px", fontSize: 12.5, color: t.ink }} />
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => doAuth("login")} style={{ flex: 1, border: "none", background: t.accent, color: t.accentInk, borderRadius: 8, padding: "7px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{lang === "fr" ? "Se connecter" : "Log in"}</button>
+                  <button onClick={() => doAuth("register")} style={{ flex: 1, border: `1px solid ${t.line}`, background: t.panel2, color: t.ink, borderRadius: 8, padding: "7px 0", fontSize: 12, cursor: "pointer" }}>{lang === "fr" ? "Créer" : "Register"}</button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -564,7 +639,7 @@ export default function TopoAuditDashboard() {
             <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: t.faint }}>{s.dossier}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: t.sub }}>{s.f_commune}</span><span style={{ fontWeight: 600 }}>{commune}</span></div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: t.sub }}>{s.d_crs}</span><span style={{ fontFamily: MONO, fontWeight: 600 }}>EPSG:32631</span></div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: t.sub }}>{s.d_crs}</span><span style={{ fontFamily: MONO, fontWeight: 600 }}>{displayedCrs ?? (lang === "fr" ? "CRS à confirmer" : "CRS to confirm")}</span></div>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: t.sub }}>{s.d_parcels}</span><span style={{ fontWeight: 600 }}>{parcels.length}</span></div>
             </div>
           </div>
@@ -777,15 +852,19 @@ export default function TopoAuditDashboard() {
                   <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: t.sub, maxWidth: 680 }}>{s.audit_sub}</p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.2fr", gap: 16, marginBottom: 16 }}>
-                  {[{ label: s.score_ocr, score: auditView.ocrScore, color: auditView.ocrColor, dash: auditView.ocrDash }, { label: s.score_tech, score: auditView.techScore, color: auditView.techColor, dash: auditView.techDash }].map((g, i) => (
+                  {[{ label: s.score_ocr, score: auditView.ocrScore, color: auditView.ocrColor, dash: auditView.ocrDash, nullScore: Boolean((auditView as { ocrScoreNull?: boolean }).ocrScoreNull) }, { label: s.score_tech, score: auditView.techScore, color: auditView.techColor, dash: auditView.techDash, nullScore: false }].map((g, i) => (
                     <div key={i} style={{ ...panelCard, padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
                       <svg width="76" height="76" viewBox="0 0 76 76">
                         <circle cx="38" cy="38" r="32" fill="none" stroke={t.line} strokeWidth="7" />
-                        <circle cx="38" cy="38" r="32" fill="none" stroke={g.color} strokeWidth="7" strokeLinecap="round" strokeDasharray={g.dash} transform="rotate(-90 38 38)" />
+                        {!g.nullScore && <circle cx="38" cy="38" r="32" fill="none" stroke={g.color} strokeWidth="7" strokeLinecap="round" strokeDasharray={g.dash} transform="rotate(-90 38 38)" />}
                       </svg>
                       <div>
                         <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", color: t.faint, marginBottom: 4 }}>{g.label}</div>
-                        <div style={{ fontSize: 30, fontWeight: 700, fontFamily: MONO, lineHeight: 1 }}>{g.score}<span style={{ fontSize: 15, color: t.faint }}>/100</span></div>
+                        {g.nullScore ? (
+                          <div style={{ fontSize: 17, fontWeight: 700, color: t.high, lineHeight: 1.1 }}>{extractionScoreText(null, lang)}</div>
+                        ) : (
+                          <div style={{ fontSize: 30, fontWeight: 700, fontFamily: MONO, lineHeight: 1 }}>{g.score}<span style={{ fontSize: 15, color: t.faint }}>/100</span></div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -912,9 +991,9 @@ export default function TopoAuditDashboard() {
                     <div style={{ ...panelCard, borderRadius: 14, padding: 15 }}>
                       <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: t.faint, marginBottom: 9 }}>{s.tech_log}</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 5, fontFamily: MONO, fontSize: 11.5, color: t.sub }}>
-                        <div>crs_source = EPSG:32631 (WGS84 / UTM 31N)</div>
+                        <div>crs_source = {displayedCrs ?? "UNKNOWN_CRS"}</div>
                         <div>crs_geojson = EPSG:4326 · always_xy=true</div>
-                        <div>transform = pyproj.Transformer 32631→4326</div>
+                        <div>transform = {isGeoreferenced ? "pyproj.Transformer → EPSG:4326" : "disabled"}</div>
                         <div>engine = topoaudit-geometry v0.1.0</div>
                       </div>
                     </div>

@@ -60,18 +60,16 @@ from app.workflow import (
 
 @asynccontextmanager
 async def lifespan(_app: "FastAPI"):
-    # Applique le schéma au DÉMARRAGE (pas de migration Alembic au runtime sinon la base
-    # déployée reste vide → toutes les routes DB en 500). create_all couvre l'ORM ; la
-    # table audit_inputs (SQL brut, hors ORM) est créée explicitement.
+    # Schéma au démarrage UNIQUEMENT hors production : en local/démo, create_all + les
+    # migrations idempotentes amorcent la base sans Alembic. En PRODUCTION, le schéma est
+    # géré par Alembic (`alembic upgrade head`) — aucun create_all ni ALTER au runtime.
     engine = get_engine()
-    Base.metadata.create_all(bind=engine)
-    ensure_audit_inputs_table(engine)
-    # Migrations idempotentes (bases créées avant P0.2/P1.1) :
-    #  - geom nullable (point sans CRS géoréférencé) ;
-    #  - colonne owner_id sur projects (propriété SaaS).
-    with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE survey_points ALTER COLUMN geom DROP NOT NULL"))
-        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id VARCHAR(36)"))
+    if settings.app_env != "production":
+        Base.metadata.create_all(bind=engine)
+        ensure_audit_inputs_table(engine)
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE survey_points ALTER COLUMN geom DROP NOT NULL"))
+            conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id VARCHAR(36)"))
     # Log de démarrage : provider OCR + modèle actifs (le filtre anti-secret installé par
     # app.config garantit qu'aucune clé n'apparaît dans les logs).
     # logger "uvicorn.error" : visible dans la sortie de démarrage (le logger applicatif
