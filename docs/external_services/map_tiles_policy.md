@@ -1,29 +1,32 @@
 # Politique d'utilisation des tuiles cartographiques
 
 ## Usage prévu
-Affichage du fond de carte (plan + satellite) pour visualiser le tracé des parcelles.
-Deux sources : OpenStreetMap (plan) et Esri World Imagery (satellite — voir
-[esri_world_imagery.md](esri_world_imagery.md)). Visualisation uniquement.
+Affichage d'un **fond de carte satellite unique — Esri World Imagery** (voir
+[esri_world_imagery.md](esri_world_imagery.md)) pour visualiser le tracé des parcelles
+géoréférencées. La superposition OpenStreetMap a été retirée du prototype (carte hybride
+peu lisible). Visualisation uniquement.
 
 ## Endpoints / fournisseurs
-- OSM (plan) : `https://tile.openstreetmap.org/{z}/{x}/{y}.png`.
-- Esri (satellite) : voir doc dédiée.
+- Esri World Imagery (satellite) : tuiles raster XYZ — voir la doc dédiée.
 - Aucune API publique propriétaire ; ce sont des serveurs de tuiles raster XYZ.
 
 ## Variables d'environnement
 | Variable | Rôle |
 |---|---|
-| `NEXT_PUBLIC_PLAN_TILE_URL` | Gabarit XYZ du fond « plan » (optionnel ; défaut OSM) |
-| `NEXT_PUBLIC_SATELLITE_TILE_URL` | Gabarit XYZ du fond « satellite » (optionnel ; défaut Esri) |
+| `NEXT_PUBLIC_SATELLITE_TILE_URL` | Gabarit XYZ du fond satellite (optionnel ; défaut Esri World Imagery) |
+
+> `NEXT_PUBLIC_PLAN_TILE_URL` (ancien fond OSM) n'est plus utilisé depuis le passage à un
+> fond satellite unique.
 
 ## Limites & politique
-- **OSM Tile Usage Policy** : pas d'usage massif/commercial sur les serveurs publics ;
-  fixer un `User-Agent`/`Referer` clair ; prévoir un fournisseur de tuiles dédié
-  (MapTiler, Stadia, self-host) avant toute mise en production.
+- Fond satellite **indicatif** : aucune valeur juridique ni de bornage.
 - Mettre en cache raisonnablement ; ne pas marteler les serveurs (bulk download interdit).
-- Attribution obligatoire pour chaque source (OSM : « © OpenStreetMap contributors »).
+- Attribution obligatoire (« Tiles © Esri, Maxar, Earthstar Geographics »).
+- Prévoir un fournisseur de tuiles dédié (Esri sous licence, MapTiler, self-host) avant
+  toute mise en production / usage commercial.
 
 ## Risques légaux / conformité
-- Respecter les conditions de chaque fournisseur (OSM, Esri) ; le non-respect peut
+- Respecter les conditions d'Esri (voir esri_world_imagery.md) ; le non-respect peut
   entraîner un blocage d'IP.
-- Les fonds de carte sont **illustratifs** : aucune valeur juridique ni de bornage.
+- L'imagerie satellite est **illustrative** : ce n'est PAS une référence cadastrale ni une
+  preuve foncière.

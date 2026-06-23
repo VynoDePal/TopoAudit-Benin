@@ -41,3 +41,13 @@ test("toWgs84 : EPSG:4326 passe-plat, EPSG:32631 projette en lon/lat Bénin", ()
   assert.ok(lon > 0.5 && lon < 4.5, `lon=${lon}`);
   assert.ok(lat > 6 && lat < 13.5, `lat=${lat}`);
 });
+
+test("carte Esri affichée uniquement pour un CRS transformable", () => {
+  // La carte Esri (MapLibre) ne s'affiche que si le CRS est transformable.
+  for (const noEsri of ["LOCAL_ONLY", "UNKNOWN_CRS", "NEEDS_GEOREFERENCING", "local"]) {
+    assert.equal(crs.isTransformableCrs(noEsri), false, `${noEsri} ne doit PAS afficher Esri`);
+  }
+  for (const esri of ["EPSG:32631", "EPSG:4326"]) {
+    assert.equal(crs.isTransformableCrs(esri), true, `${esri} peut afficher Esri`);
+  }
+});

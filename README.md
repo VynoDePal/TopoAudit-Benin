@@ -92,6 +92,7 @@ Services Compose :
 - Validation géométrique avec Shapely : surface, périmètre, distances, auto-intersections, orientation.
 - Score de risque dynamique selon la qualité des données et les écarts de surface.
 - Rapport PDF généré côté API.
+- Carte (MapLibre) avec **fond satellite Esri World Imagery uniquement** (`NEXT_PUBLIC_SATELLITE_TILE_URL`) pour les CRS transformables ; vue locale sans fond pour les CRS non géoréférencés. Fond **indicatif, non référence cadastrale**.
 - Documentation OpenAPI synchronisée dans `docs/openapi.json`.
 
 ## Variables d'environnement utiles

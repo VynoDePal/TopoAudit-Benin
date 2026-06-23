@@ -1,9 +1,16 @@
 # Esri World Imagery (fond satellite)
 
 ## Usage prévu
-Fond de carte satellite (imagerie aérienne) pour la **visualisation** du tracé de la
-parcelle à l'étape Rapport (bascule « Satellite »). Aucune valeur de preuve foncière :
-purement illustratif.
+Fond de carte satellite **unique** (imagerie aérienne) pour la **visualisation** du tracé
+de la parcelle (carte MapLibre de l'étape Rapport, pour les CRS transformables). Plus de
+superposition OSM. Aucune valeur de preuve foncière : purement illustratif.
+
+## Conditions d'usage (résumé)
+- **Visualisation uniquement** — pas de calcul ni de référence sur ce fond.
+- **Non référence cadastrale.**
+- **Attribution obligatoire** : « Source: Esri, Maxar, Earthstar Geographics ».
+- **Vérifier la licence Esri avant tout usage commercial.**
+- **Ne pas utiliser l'imagerie comme preuve foncière** ni comme relevé officiel.
 
 ## Endpoints
 - Tuiles raster XYZ : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}`
