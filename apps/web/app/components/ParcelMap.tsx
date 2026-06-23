@@ -7,33 +7,24 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 const beninCenter: [number, number] = [2.3158, 9.3077];
 
-// URLs de tuiles configurables (NEXT_PUBLIC_*) avec des valeurs par défaut pour la démo
-// locale. Les fonds de carte sont INDICATIFS — pas une référence cadastrale.
-const PLAN_TILE_URL =
-  process.env.NEXT_PUBLIC_PLAN_TILE_URL ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+// Fond UNIQUE : Esri World Imagery (raster), URL configurable via NEXT_PUBLIC_*.
+// Plus de superposition OSM (carte hybride peu lisible). Fond INDICATIF, non cadastral.
 const SATELLITE_TILE_URL =
   process.env.NEXT_PUBLIC_SATELLITE_TILE_URL ??
   "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 
-const osmEsriStyle: StyleSpecification = {
+const esriImageryStyle: StyleSpecification = {
   version: 8,
   sources: {
-    osm: {
-      type: "raster",
-      tiles: [PLAN_TILE_URL],
-      tileSize: 256,
-      attribution: "© OpenStreetMap contributors — fond indicatif, non référence cadastrale"
-    },
     esri: {
       type: "raster",
       tiles: [SATELLITE_TILE_URL],
       tileSize: 256,
-      attribution: "Tiles © Esri — fond satellite indicatif, non référence cadastrale"
+      attribution: "Tiles © Esri, Maxar, Earthstar Geographics — fond satellite indicatif, non référence cadastrale"
     }
   },
   layers: [
-    { id: "esri-satellite", type: "raster", source: "esri", paint: { "raster-opacity": 0.42 } },
-    { id: "osm-streets", type: "raster", source: "osm", paint: { "raster-opacity": 0.78 } }
+    { id: "esri-satellite", type: "raster", source: "esri", paint: { "raster-opacity": 1 } }
   ]
 };
 
@@ -109,7 +100,7 @@ export default function ParcelMap({
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: osmEsriStyle,
+      style: esriImageryStyle,
       center: beninCenter,
       zoom: 6,
       attributionControl: false

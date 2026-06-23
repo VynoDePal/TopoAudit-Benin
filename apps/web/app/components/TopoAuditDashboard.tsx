@@ -918,7 +918,7 @@ export default function TopoAuditDashboard() {
                 <div style={{ display: "grid", gridTemplateColumns: "1.15fr 1fr", gap: 18, alignItems: "start" }}>
                   {isGeoreferenced ? (
                   <section style={{ ...panelCard, overflow: "hidden" }}>
-                    <ParcelMap parcels={geoParcels} title={s.map_title} description={lang === "fr" ? "Carte géoréférencée (MapLibre · fond OSM + satellite Esri)." : "Georeferenced map (MapLibre · OSM + Esri satellite)."} />
+                    <ParcelMap parcels={geoParcels} title={s.map_title} description={lang === "fr" ? "Fond satellite Esri World Imagery." : "Esri World Imagery basemap."} />
                     <div style={{ padding: "8px 12px", fontSize: 11.5, lineHeight: 1.45, color: "#92400e", background: "#fef3c7", borderTop: "1px solid #f59e0b" }}>
                       {lang === "fr" ? "Fond satellite indicatif, non référence cadastrale." : "Indicative satellite background, not a cadastral reference."}
                     </div>
