@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from app.config import settings
@@ -35,6 +36,7 @@ def _has_real_provider() -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Évaluation OCR réelle (Gemini/Azure) — hors CI.")
     parser.add_argument("--dataset", default=str(DEFAULT_DATASET))
+    parser.add_argument("--delay", type=float, default=0.0, help="pause (s) entre scans pour éviter le rate-limiting")
     args = parser.parse_args(argv)
 
     if not _has_real_provider():
@@ -50,23 +52,30 @@ def main(argv: list[str] | None = None) -> int:
     dataset_dir = dataset_path.parent
 
     metrics = []
+    errors: list[dict] = []
     for case in data.get("cases", []):
         image = dataset_dir / str(case.get("file_path", ""))
         if not image.exists():
-            print(f"SKIP {case.get('id')} : image absente ({image})", file=sys.stderr)
+            errors.append({"id": case.get("id"), "error": "image absente"})
             continue
         content_type = _CONTENT_TYPES.get(image.suffix.lower(), "image/png")
-        text, provider = extract_text_from_document(str(image), content_type)
+        try:
+            text, provider = extract_text_from_document(str(image), content_type)
+        except Exception as exc:  # noqa: BLE001 — erreur OCR transitoire (quota/5xx) : on continue
+            errors.append({"id": case.get("id"), "error": str(exc)[:140]})
+            if args.delay:
+                time.sleep(args.delay)
+            continue
         if provider == "mock":
-            print(f"SKIP {case.get('id')} : le provider est retombé sur le mock", file=sys.stderr)
+            errors.append({"id": case.get("id"), "error": "provider retombé sur le mock"})
             continue
         metrics.append(evaluate_parser_case({**case, "ocr_text": text}))
+        if args.delay:
+            time.sleep(args.delay)
 
-    if not metrics:
-        print("SKIP : aucune image réelle disponible à évaluer.", file=sys.stderr)
-        return 0
-
-    print(json.dumps(aggregate(metrics), ensure_ascii=False, sort_keys=True))
+    result = aggregate(metrics)
+    result["errors"] = errors
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 
 

@@ -4,11 +4,11 @@
 // (top bar + sidebar workflow + 4 étapes intake→validate→audit→report, 3 thèmes, FR/EN).
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import type { FeatureCollection, Polygon } from "geojson";
-import proj4 from "proj4";
 
 import ParcelMap from "./ParcelMap";
 import { authHeaders, loadToken, saveToken, withAuth } from "../lib/authClient";
 import { extractionScoreText, isExtractionScoreNull } from "../lib/auditFormat";
+import { isTransformableCrs, toWgs84 } from "../lib/crsClient";
 import {
   confTone,
   DEFAULT_PARCELS,
@@ -27,24 +27,6 @@ import {
 
 const MONO = "'IBM Plex Mono', monospace";
 type S = Record<string, string>;
-
-// Seuls ces CRS sont géoréférencés et transformables vers WGS84. Tout le reste
-// (LOCAL_ONLY, UNKNOWN_CRS, NEEDS_GEOREFERENCING, local, valeur inconnue) est NON
-// transformable — on ne projette JAMAIS implicitement un CRS inconnu comme de l'UTM 31N.
-export const TRANSFORMABLE_CRS = new Set(["EPSG:32631", "EPSG_32631", "EPSG:4326", "EPSG_4326"]);
-export const isTransformableCrs = (crs: string | null | undefined): boolean =>
-  !!crs && TRANSFORMABLE_CRS.has(crs);
-
-// Transformation UTM 31N → WGS84 (lon/lat) pour la carte MapLibre. Lève si le CRS n'est
-// pas transformable (anti fausse-confiance : pas de projection d'un CRS inconnu).
-const UTM_31N_PROJ = "+proj=utm +zone=31 +datum=WGS84 +units=m +no_defs";
-export const toWgs84 = (x: number, y: number, crs: string): [number, number] => {
-  if (!isTransformableCrs(crs)) {
-    throw new Error(`CRS non transformable vers WGS84 : ${crs}`);
-  }
-  if (crs === "EPSG:4326" || crs === "EPSG_4326") return [x, y];
-  return proj4(UTM_31N_PROJ, "WGS84", [x, y]) as [number, number];
-};
 
 // Réponse d'audit du backend (source de vérité, identique au PDF). extraction_score peut
 // être null (validation humaine requise) → ne JAMAIS le convertir implicitement en 0.
@@ -780,10 +762,12 @@ export default function TopoAuditDashboard() {
                         <input value={view.active.declaredM2} onChange={(e) => updateField(activeIdx, "declaredM2", e.target.value)} inputMode="decimal" style={{ ...inputStyle, background: t.panel, fontSize: 13, fontFamily: MONO }} />
                       </label>
                       <label style={{ ...labelStyle, fontSize: 11.5 }}>{s.crs}
-                        <select value={view.active.crs} onChange={(e) => updateField(activeIdx, "crs", e.target.value)} style={{ ...inputStyle, background: t.panel, fontSize: 13 }}>
-                          <option value="EPSG:32631">EPSG:32631 · UTM 31N</option>
-                          <option value="EPSG:4326">EPSG:4326 · WGS84</option>
-                          <option value="local">{s.crs_local}</option>
+                        <select value={view.active.crs === "local" ? "LOCAL_ONLY" : view.active.crs} onChange={(e) => updateField(activeIdx, "crs", e.target.value)} style={{ ...inputStyle, background: t.panel, fontSize: 13 }}>
+                          <option value="EPSG:32631">EPSG:32631 — WGS84 / UTM 31N</option>
+                          <option value="EPSG:4326">EPSG:4326 — longitude / latitude</option>
+                          <option value="LOCAL_ONLY">LOCAL_ONLY — coordonnées locales, pas de fond satellite</option>
+                          <option value="UNKNOWN_CRS">UNKNOWN_CRS — CRS inconnu, à confirmer</option>
+                          <option value="NEEDS_GEOREFERENCING">NEEDS_GEOREFERENCING — rattachement requis</option>
                         </select>
                       </label>
                     </div>
@@ -972,7 +956,16 @@ export default function TopoAuditDashboard() {
                   <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                     <div style={{ ...panelCard, padding: 18 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                        <div style={{ flex: 1 }}><div style={{ fontSize: 11, textTransform: "uppercase", color: t.faint, letterSpacing: ".05em" }}>{s.score_ocr}</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: MONO }}>{auditView.ocrScore}<span style={{ fontSize: 13, color: t.faint }}>/100</span></div></div>
+                        <div style={{ flex: 1 }}><div style={{ fontSize: 11, textTransform: "uppercase", color: t.faint, letterSpacing: ".05em" }}>{s.score_ocr}</div>
+                          {isExtractionScoreNull(auditView.ocrScore) ? (
+                            <>
+                              <div style={{ fontSize: 16, fontWeight: 700, color: t.high }}>{extractionScoreText(null, lang)}</div>
+                              {(auditView as { ocrScoreStatus?: string }).ocrScoreStatus && <div style={{ fontSize: 10, color: t.faint, fontFamily: MONO }}>{(auditView as { ocrScoreStatus?: string }).ocrScoreStatus}</div>}
+                            </>
+                          ) : (
+                            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: MONO }}>{auditView.ocrScore}<span style={{ fontSize: 13, color: t.faint }}>/100</span></div>
+                          )}
+                        </div>
                         <div style={{ flex: 1 }}><div style={{ fontSize: 11, textTransform: "uppercase", color: t.faint, letterSpacing: ".05em" }}>{s.score_tech}</div><div style={{ fontSize: 22, fontWeight: 700, fontFamily: MONO }}>{auditView.techScore}<span style={{ fontSize: 13, color: t.faint }}>/100</span></div></div>
                         <div style={{ flex: "none", fontSize: 13, fontWeight: 700, padding: "7px 13px", borderRadius: 9, background: auditView.riskSoft, color: auditView.riskColor, border: `1px solid ${auditView.riskColor}` }}>{auditView.riskLabel}</div>
                       </div>

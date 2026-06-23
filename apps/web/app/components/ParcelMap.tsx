@@ -7,22 +7,28 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 const beninCenter: [number, number] = [2.3158, 9.3077];
 
+// URLs de tuiles configurables (NEXT_PUBLIC_*) avec des valeurs par défaut pour la démo
+// locale. Les fonds de carte sont INDICATIFS — pas une référence cadastrale.
+const PLAN_TILE_URL =
+  process.env.NEXT_PUBLIC_PLAN_TILE_URL ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const SATELLITE_TILE_URL =
+  process.env.NEXT_PUBLIC_SATELLITE_TILE_URL ??
+  "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+
 const osmEsriStyle: StyleSpecification = {
   version: 8,
   sources: {
     osm: {
       type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tiles: [PLAN_TILE_URL],
       tileSize: 256,
-      attribution: "© OpenStreetMap contributors"
+      attribution: "© OpenStreetMap contributors — fond indicatif, non référence cadastrale"
     },
     esri: {
       type: "raster",
-      tiles: [
-        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-      ],
+      tiles: [SATELLITE_TILE_URL],
       tileSize: 256,
-      attribution: "Tiles © Esri"
+      attribution: "Tiles © Esri — fond satellite indicatif, non référence cadastrale"
     }
   },
   layers: [
