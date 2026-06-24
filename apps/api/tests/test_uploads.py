@@ -7,6 +7,8 @@ from sqlalchemy.sql.elements import TextClause
 from app.config import settings
 from app.database import get_db
 from app.main import app
+from app.ocr import OcrProviderResult
+from app.uploads import extract_parcels_from_ocr_text
 
 
 class FakeResult:
@@ -123,9 +125,9 @@ def test_ocr_extracts_multiple_coordinate_groups_into_distinct_parcels(tmp_path,
     # P0.3 : l'extraction multi-parcelles se fait au stade OCR (pas à l'upload).
     monkeypatch.setattr(settings, "local_storage_path", str(tmp_path))
     monkeypatch.setattr(
-        "app.main.extract_text_from_document",
-        lambda storage_path, content_type: (
-            """
+        "app.main.extract_ocr_from_document",
+        lambda storage_path, content_type, provider_name=None: OcrProviderResult(
+            text="""
             Plan multi-parcelles
             Parcelle A
             Surface déclarée: 05a 49ca
@@ -141,7 +143,8 @@ def test_ocr_extracts_multiple_coordinate_groups_into_distinct_parcels(tmp_path,
             P3 403860.00 707660.00
             P4 403850.00 707660.00
             """.strip(),
-            "mock",
+            provider="mock",
+            model=None,
         ),
     )
     session = FakeUploadSession()
@@ -242,3 +245,58 @@ def test_upload_rejects_missing_project_before_writing_file(tmp_path, monkeypatc
     assert response.status_code == 404
     assert session.inserted is None
     assert not tmp_path.exists() or not any(tmp_path.iterdir())
+
+
+# --- Parser : tableaux Markdown (Mistral OCR) + confiance par mot -----------------------
+
+
+def test_extract_parcels_from_markdown_table():
+    # Tableau Markdown Mistral : en-tête + séparateur ignorés ; labels « B.2 » supportés.
+    ocr_text = (
+        "Parcelle A\n"
+        "Surface déclarée: 05a 49ca\n"
+        "| Borne | X | Y |\n"
+        "|---|---|---|\n"
+        "| B1 | 402119.76 | 725732.25 |\n"
+        "| B.2 | 402130.00 | 725740.00 |\n"
+        "| B3 | 402140.00 | 725730.00 |\n"
+    )
+    parcels = extract_parcels_from_ocr_text(ocr_text)
+    assert len(parcels) == 1
+    assert [p.label for p in parcels[0].points] == ["B1", "B.2", "B3"]
+    assert parcels[0].points[0].x == 402119.76
+    assert parcels[0].points[0].y == 725732.25
+    # Sans word scores → confiance OCR null (jamais inventée).
+    assert all(p.confidence is None for p in parcels[0].points)
+
+
+def test_markdown_parser_does_not_break_simple_lines():
+    # Le support Markdown ne casse pas le parser des lignes simples existant.
+    ocr_text = "Parcelle A\nP1 403825.84 707630.38\nP2 403836.57 707626.36\nP3 403840.12 707641.10"
+    parcels = extract_parcels_from_ocr_text(ocr_text)
+    assert len(parcels) == 1
+    assert [p.label for p in parcels[0].points] == ["P1", "P2", "P3"]
+
+
+def test_markdown_confidence_from_word_scores_is_numeric_or_null():
+    ocr_text = (
+        "| Borne | X | Y |\n"
+        "| B1 | 402119.76 | 725732.25 |\n"
+        "| B2 | 402130.00 | 725740.00 |\n"
+        "| B3 | 402140.00 | 725730.00 |\n"
+    )
+    word_confidences = [
+        {"text": "B1", "confidence": 0.9},
+        {"text": "402119.76", "confidence": 0.8},
+        {"text": "725732.25", "confidence": 0.7},
+        # B2 partiel (X/Y manquants) → association incomplète → confiance None.
+        {"text": "B2", "confidence": 0.9},
+    ]
+    parcels = extract_parcels_from_ocr_text(ocr_text, word_confidences=word_confidences)
+    points = parcels[0].points
+    # B1 entièrement associé → moyenne des 3 scores (0.8), bornée [0,1].
+    assert points[0].confidence is not None
+    assert abs(points[0].confidence - 0.8) < 1e-9
+    assert 0.0 <= points[0].confidence <= 1.0
+    # B2 incomplet → jamais inventé.
+    assert points[1].confidence is None

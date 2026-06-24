@@ -28,6 +28,11 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_API_ENDPOINT: ${GEMINI_API_ENDPOINT:-https://generativelanguage.googleapis.com/v1beta}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemma-4-31b-it}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      MISTRAL_API_ENDPOINT: ${MISTRAL_API_ENDPOINT:-https://api.mistral.ai/v1}
+      MISTRAL_OCR_MODEL: ${MISTRAL_OCR_MODEL:-mistral-ocr-latest}
+      MISTRAL_INCLUDE_BLOCKS: ${MISTRAL_INCLUDE_BLOCKS:-true}
+      MISTRAL_CONFIDENCE_GRANULARITY: ${MISTRAL_CONFIDENCE_GRANULARITY:-word}
     depends_on:
       db:
         condition: service_healthy

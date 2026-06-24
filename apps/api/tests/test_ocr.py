@@ -622,3 +622,165 @@ def test_ocr_gemini_service_unavailable_after_all_retries(monkeypatch, tmp_path)
     assert response.status_code == 502
     assert response.json()["detail"] == "Gemini OCR service unavailable"
     assert _FlakyGeminiClient.calls == 3
+
+
+# --- Mistral OCR 4 (provider sélectionnable) -------------------------------------------
+
+
+class FakeMistralResponse:
+    def __init__(self, payload: dict | None = None, status_error: Exception | None = None) -> None:
+        self.payload = payload or {}
+        self.status_error = status_error
+
+    def raise_for_status(self):
+        if self.status_error:
+            raise self.status_error
+
+    def json(self):
+        return self.payload
+
+
+class FakeMistralClient:
+    last_request = None
+    # Réponse type Mistral OCR : markdown (table) + scores de confiance par mot.
+    response = FakeMistralResponse(
+        {
+            "pages": [
+                {
+                    "markdown": (
+                        "| Borne | X | Y |\n"
+                        "|---|---|---|\n"
+                        "| B1 | 402119.76 | 725732.25 |\n"
+                        "| B2 | 402130.00 | 725740.00 |\n"
+                        "| B3 | 402140.00 | 725730.00 |\n"
+                        "SURFACE: 05a 49ca"
+                    ),
+                    "page_confidence": 0.91,
+                    "words": [
+                        {"text": "B1", "confidence": 0.95},
+                        {"text": "402119.76", "confidence": 0.90},
+                        {"text": "725732.25", "confidence": 0.92},
+                        {"text": "B2", "confidence": 0.90},
+                        {"text": "402130.00", "confidence": 0.90},
+                        {"text": "725740.00", "confidence": 0.90},
+                        {"text": "B3", "confidence": 0.90},
+                        {"text": "402140.00", "confidence": 0.90},
+                        {"text": "725730.00", "confidence": 0.90},
+                    ],
+                }
+            ]
+        }
+    )
+
+    def __init__(self, timeout: float) -> None:
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def post(self, url: str, headers: dict[str, str], json: dict):
+        FakeMistralClient.last_request = {"url": url, "headers": headers, "json": json, "timeout": self.timeout}
+        return FakeMistralClient.response
+
+
+def _mistral_doc(project_id="project-1", document_id="document-1", storage_path="/tmp/plan.png"):
+    project = SimpleNamespace(id=project_id, name="Demo", status="UPLOADED")
+    document = SimpleNamespace(
+        id=document_id,
+        project_id=project_id,
+        filename="plan.png",
+        content_type="image/png",
+        storage_path=storage_path,
+    )
+    app.dependency_overrides[get_db] = override_db(project, document)
+
+
+def test_ocr_mistral_without_key_falls_back_to_mock_in_local(monkeypatch):
+    _mistral_doc()
+    monkeypatch.setattr("app.ocr.settings.app_env", "local")
+    monkeypatch.setattr("app.ocr.settings.mistral_api_key", "")
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr?provider=mistral")
+
+    assert response.status_code == 200
+    body = response.json()
+    # Fallback mock autorisé en local, MAIS tracé : configured=mistral, actual=mock.
+    assert body["configured_provider"] == "mistral"
+    assert body["actual_provider"] == "mock"
+    assert body["is_mock_result"] is True
+    assert body["provider_model"] is None
+
+
+def test_get_ocr_provider_mistral_requires_key_outside_local(monkeypatch):
+    monkeypatch.setattr("app.ocr.settings.app_env", "production")
+    monkeypatch.setattr("app.ocr.settings.mistral_api_key", "")
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_ocr_provider("mistral")
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "OCR provider 'mistral' credentials are not configured"
+
+
+def test_ocr_rejects_unknown_provider_query():
+    _mistral_doc()
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr?provider=banana")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unsupported OCR provider"
+
+
+def test_ocr_mistral_real_extracts_markdown_table_and_word_confidence(monkeypatch, tmp_path):
+    document_path = tmp_path / "plan.png"
+    document_path.write_bytes(b"\x89PNG\r\n\x1a\n fake png")
+    _mistral_doc(storage_path=str(document_path))
+    monkeypatch.setattr("app.ocr.settings.mistral_api_key", "test-mistral-key")
+    monkeypatch.setattr("app.ocr.settings.mistral_ocr_model", "mistral-ocr-latest")
+    monkeypatch.setattr("app.ocr.httpx.Client", FakeMistralClient)
+    FakeMistralClient.last_request = None
+    client = TestClient(app)
+
+    response = client.post("/api/projects/project-1/documents/document-1/ocr?provider=mistral")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "mistral"
+    assert body["configured_provider"] == "mistral"
+    assert body["actual_provider"] == "mistral"
+    assert body["is_mock_result"] is False
+    assert body["provider_model"] == "mistral-ocr-latest"
+    # Parsing du tableau Markdown Mistral.
+    parcels = body["parsed_parcels"]
+    assert parcels and [pt["label"] for pt in parcels[0]["points"]] == ["B1", "B2", "B3"]
+    # Confiance OCR machine numérique (agrégat des word scores), bornée [0,1].
+    first_conf = parcels[0]["points"][0]["confidence"]
+    assert first_conf is not None and 0.0 <= first_conf <= 1.0
+    # La requête porte bien le Bearer, mais la clé n'apparaît JAMAIS dans la réponse.
+    assert FakeMistralClient.last_request["headers"]["Authorization"] == "Bearer test-mistral-key"
+    assert FakeMistralClient.last_request["json"]["document"]["type"] == "image_url"
+    assert "test-mistral-key" not in response.text
+
+
+def test_list_ocr_providers_endpoint(monkeypatch):
+    monkeypatch.setattr("app.ocr.settings.mistral_api_key", "configured-key")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "")
+    client = TestClient(app)
+
+    response = client.get("/api/ocr/providers")
+
+    assert response.status_code == 200
+    by_id = {p["id"]: p for p in response.json()}
+    assert set(by_id) == {"gemini", "mistral", "mock"}
+    assert by_id["mistral"]["label"] == "Mistral OCR 4"
+    assert by_id["mistral"]["supports_word_confidence"] is True
+    assert by_id["mistral"]["configured"] is True
+    assert by_id["gemini"]["configured"] is False
+    assert by_id["mock"]["configured"] is True
+    # Jamais de clé API exposée.
+    assert "configured-key" not in response.text

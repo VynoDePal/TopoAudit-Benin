@@ -27,6 +27,22 @@ GEMINI_API_KEY=...votre-cle...
 GEMINI_MODEL=gemma-4-31b-it
 ```
 
+Le **moteur OCR est sélectionnable à l'étape Import** : **Gemma 4 / Gemini**,
+**Mistral OCR 4**, ou **Mock OCR** (local). Le choix est envoyé au backend
+(`?provider=`). Pour Mistral, renseigner dans `.env` (voir
+[docs/external_services/mistral_ocr_4.md](docs/external_services/mistral_ocr_4.md)) —
+**ne jamais committer/logger `MISTRAL_API_KEY`** :
+
+```env
+MISTRAL_API_KEY=...votre-cle...
+MISTRAL_OCR_MODEL=mistral-ocr-latest
+```
+
+`GET /api/ocr/providers` liste les providers et leur état (jamais les clés). Mistral peut
+fournir une **confiance OCR machine par borne** (scores par mot) ; Gemini/Gemma reste
+sans confiance par borne (« À valider »). La **validation humaine reste obligatoire** et
+distincte de la confiance OCR.
+
 ### 2. Lancer toute la stack
 
 ```bash
@@ -85,8 +101,8 @@ Services Compose :
 
 - Création de projet et upload de document.
 - Validation des fichiers uploadés : PDF, PNG, JPG/JPEG, taille maximum `MAX_UPLOAD_MB`.
-- OCR via mock, Gemini ou Azure Document Intelligence selon configuration.
-- Extraction de parcelles, surfaces déclarées et bornes depuis le texte OCR.
+- OCR via **mock, Gemma 4 / Gemini, Mistral OCR 4** ou Azure Document Intelligence — **provider sélectionnable à l'import** (`?provider=`), `GET /api/ocr/providers` pour l'état.
+- Extraction de parcelles, surfaces déclarées et bornes depuis le texte OCR (tableaux **Markdown** supportés pour Mistral).
 - Validation humaine des coordonnées avant audit.
 - Conversion CRS `EPSG:32631` vers `EPSG:4326`.
 - Validation géométrique avec Shapely : surface, périmètre, distances, auto-intersections, orientation.
@@ -106,7 +122,9 @@ Voir `.env.example` pour la liste complète.
 | `FRONTEND_URL` | `http://localhost:3000` | Origine CORS autorisée. |
 | `LOCAL_STORAGE_PATH` | `/data/uploads` | Stockage local des uploads dans le conteneur API. |
 | `MAX_UPLOAD_MB` | `25` | Taille maximum des fichiers importés. |
-| `OCR_PROVIDER` | `mock` dans `.env.example`, `gemini` dans Compose | Fournisseur OCR demandé : `mock`, `gemini`, `azure`. |
+| `OCR_PROVIDER` | `mock` dans `.env.example`, `gemini` dans Compose | Fournisseur OCR par défaut : `mock`, `gemini`, `mistral`, `azure` (surchargeable à l'import via `?provider=`). |
+| `MISTRAL_API_KEY` | _(vide)_ | Clé Mistral OCR 4. **Jamais loggée/committée.** Voir `docs/external_services/mistral_ocr_4.md`. |
+| `MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | Modèle Mistral OCR. |
 | `GEMINI_API_KEY` | vide | Active réellement Gemini si renseignée. |
 | `GEMINI_API_ENDPOINT` | Google Generative Language API | Endpoint Gemini. |
 | `GEMINI_MODEL` | `gemma-4-31b-it` | Modèle Gemini obligatoire pour le prototype durci. |
