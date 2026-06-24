@@ -9,7 +9,9 @@ export const OCR_PROVIDERS: { id: OcrProviderId; labelFr: string; labelEn: strin
   { id: "mock", labelFr: "Mock OCR", labelEn: "Mock OCR" },
 ];
 
-export const DEFAULT_OCR_PROVIDER: OcrProviderId = "gemini";
+// Défaut = Mistral OCR 4 (meilleure extraction + confiance OCR par borne). Surchargeable
+// dans le select « Moteur OCR » à l'import.
+export const DEFAULT_OCR_PROVIDER: OcrProviderId = "mistral";
 
 export function ocrProviderLabel(id: string, lang: "fr" | "en" = "fr"): string {
   const provider = OCR_PROVIDERS.find((p) => p.id === id);
