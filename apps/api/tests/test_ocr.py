@@ -782,5 +782,22 @@ def test_list_ocr_providers_endpoint(monkeypatch):
     assert by_id["mistral"]["configured"] is True
     assert by_id["gemini"]["configured"] is False
     assert by_id["mock"]["configured"] is True
+    # En local : un provider non configuré reste sélectionnable (fallback mock).
+    assert by_id["mistral"]["selectable"] is True
+    assert by_id["gemini"]["selectable"] is True
+    assert by_id["mock"]["selectable"] is True
     # Jamais de clé API exposée.
     assert "configured-key" not in response.text
+
+
+def test_list_ocr_providers_disables_unconfigured_in_production(monkeypatch):
+    monkeypatch.setattr("app.ocr.settings.app_env", "production")
+    monkeypatch.setattr("app.ocr.settings.mistral_api_key", "")
+    monkeypatch.setattr("app.ocr.settings.gemini_api_key", "")
+    client = TestClient(app)
+
+    by_id = {p["id"]: p for p in client.get("/api/ocr/providers").json()}
+    # En production : pas de fallback silencieux → provider non configuré NON sélectionnable.
+    assert by_id["mistral"]["selectable"] is False
+    assert by_id["gemini"]["selectable"] is False
+    assert by_id["mock"]["selectable"] is True  # mock toujours disponible

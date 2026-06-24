@@ -19,6 +19,36 @@ export function ocrProviderLabel(id: string, lang: "fr" | "en" = "fr"): string {
   return lang === "fr" ? provider.labelFr : provider.labelEn;
 }
 
+// État d'un provider renvoyé par GET /api/ocr/providers (jamais de clé).
+export type OcrProviderInfo = {
+  id: string;
+  label: string;
+  configured: boolean;
+  supports_word_confidence: boolean;
+  // selectable = utilisable (configuré OU fallback mock autorisé en local). En
+  // staging/production un provider non configuré n'est PAS selectable.
+  selectable?: boolean;
+};
+
+// Défaut dynamique : premier provider CONFIGURÉ dans l'ordre mistral > gemini > mock
+// (mock toujours configuré → il y a toujours un défaut).
+export function pickDefaultProvider(providers: OcrProviderInfo[]): OcrProviderId {
+  for (const id of ["mistral", "gemini", "mock"] as OcrProviderId[]) {
+    const p = providers.find((x) => x.id === id);
+    if (p && p.configured) return id;
+  }
+  return "mock";
+}
+
+// Libellé d'option : « Mistral OCR 4 — configuré / clé absente (fallback mock) / clé absente ».
+export function ocrProviderStatusLabel(p: OcrProviderInfo, lang: "fr" | "en" = "fr"): string {
+  const base = ocrProviderLabel(p.id, lang);
+  if (p.id === "mock") return `${base} — ${lang === "fr" ? "local" : "local"}`;
+  if (p.configured) return `${base} — ${lang === "fr" ? "configuré" : "configured"}`;
+  if (p.selectable) return `${base} — ${lang === "fr" ? "clé absente (fallback mock)" : "key missing (mock fallback)"}`;
+  return `${base} — ${lang === "fr" ? "clé absente" : "key missing"}`;
+}
+
 // Chemin OCR avec provider en query param (n'altère pas le workflow par défaut).
 export function ocrRequestPath(projectId: string, documentId: string, provider: string): string {
   return `/projects/${projectId}/documents/${documentId}/ocr?provider=${encodeURIComponent(provider)}`;

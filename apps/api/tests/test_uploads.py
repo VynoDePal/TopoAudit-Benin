@@ -300,3 +300,73 @@ def test_markdown_confidence_from_word_scores_is_numeric_or_null():
     assert 0.0 <= points[0].confidence <= 1.0
     # B2 incomplet → jamais inventé.
     assert points[1].confidence is None
+
+
+# --- Parser : colonnes Markdown réordonnées (détection d'en-tête) -----------------------
+
+
+def test_markdown_header_reordered_y_before_x():
+    # En-tête `| Borne | Y | X |` : X/Y respectés malgré l'ordre inversé.
+    ocr_text = (
+        "| Borne | Y | X |\n"
+        "| B1 | 725732.25 | 402119.76 |\n"
+        "| B2 | 725740.00 | 402130.00 |\n"
+        "| B3 | 725730.00 | 402140.00 |\n"
+    )
+    pts = extract_parcels_from_ocr_text(ocr_text)[0].points
+    assert [p.label for p in pts] == ["B1", "B2", "B3"]
+    assert pts[0].x == 402119.76 and pts[0].y == 725732.25
+
+
+def test_markdown_header_label_last_with_easting_northing_variants():
+    # `| Easting | Northing | Point |` : libellé en dernière colonne + variantes de noms.
+    ocr_text = (
+        "| Easting | Northing | Point |\n"
+        "| 402119.76 | 725732.25 | B1 |\n"
+        "| 402130.00 | 725740.00 | B2 |\n"
+        "| 402140.00 | 725730.00 | B3 |\n"
+    )
+    pts = extract_parcels_from_ocr_text(ocr_text)[0].points
+    assert [p.label for p in pts] == ["B1", "B2", "B3"]
+    assert pts[0].x == 402119.76 and pts[0].y == 725732.25
+
+
+def test_markdown_header_xest_ynord_parenthesis_variants():
+    # `X(EST)` / `Y(NORD)` + libellé « Bornes ».
+    ocr_text = (
+        "| Bornes | X(EST) | Y(NORD) |\n"
+        "|---|---|---|\n"
+        "| B1 | 402119.76 | 725732.25 |\n"
+        "| B2 | 402130.00 | 725740.00 |\n"
+        "| B3 | 402140.00 | 725730.00 |\n"
+    )
+    pts = extract_parcels_from_ocr_text(ocr_text)[0].points
+    assert [p.label for p in pts] == ["B1", "B2", "B3"]
+    assert pts[0].x == 402119.76 and pts[0].y == 725732.25
+
+
+def test_markdown_without_header_keeps_positional_strategy():
+    # Sans en-tête : 1re cellule = label, 2 premiers nombres = X/Y (stratégie inchangée).
+    ocr_text = "| B1 | 402119.76 | 725732.25 |\n| B2 | 402130.00 | 725740.00 |\n| B3 | 402140.00 | 725730.00 |\n"
+    pts = extract_parcels_from_ocr_text(ocr_text)[0].points
+    assert [p.label for p in pts] == ["B1", "B2", "B3"]
+    assert pts[0].x == 402119.76 and pts[0].y == 725732.25
+
+
+def test_confidence_matching_normalizes_comma_and_punctuation():
+    ocr_text = (
+        "| Borne | X | Y |\n"
+        "| B1 | 402119.76 | 725732.25 |\n"
+        "| B2 | 402130.00 | 725740.00 |\n"
+        "| B3 | 402140.00 | 725730.00 |\n"
+    )
+    # Scores avec virgule décimale + ponctuation périphérique : doivent matcher les tokens.
+    word_confidences = [
+        {"text": "B1,", "confidence": 0.9},  # ponctuation
+        {"text": "402119,76", "confidence": 0.8},  # virgule décimale
+        {"text": "(725732,25)", "confidence": 0.7},  # ponctuation + virgule
+        {"text": "B2", "confidence": 0.95},  # B2 incomplet → null
+    ]
+    pts = extract_parcels_from_ocr_text(ocr_text, word_confidences=word_confidences)[0].points
+    assert pts[0].confidence is not None and abs(pts[0].confidence - 0.8) < 1e-9  # moy(0.9,0.8,0.7)
+    assert pts[1].confidence is None  # association incomplète → jamais inventée
