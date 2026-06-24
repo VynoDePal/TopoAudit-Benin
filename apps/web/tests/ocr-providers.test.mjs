@@ -38,6 +38,6 @@ test("le provider choisi est envoyé dans l'URL OCR (?provider=)", () => {
   assert.ok(m.ocrRequestPath("p", "d", "gemini").includes("?provider=gemini"));
 });
 
-test("provider OCR par défaut = gemini (workflow inchangé)", () => {
-  assert.equal(m.DEFAULT_OCR_PROVIDER, "gemini");
+test("provider OCR par défaut = mistral (meilleure extraction + confiance par borne)", () => {
+  assert.equal(m.DEFAULT_OCR_PROVIDER, "mistral");
 });
