@@ -38,34 +38,34 @@ test("le provider choisi est envoyé dans l'URL OCR (?provider=)", () => {
   assert.ok(m.ocrRequestPath("p", "d", "gemini").includes("?provider=gemini"));
 });
 
-test("provider OCR par défaut statique = mistral (avant fetch backend)", () => {
-  assert.equal(m.DEFAULT_OCR_PROVIDER, "mistral");
+test("provider OCR par défaut = gemini (Gemma recommandé pour plans topo)", () => {
+  assert.equal(m.DEFAULT_OCR_PROVIDER, "gemini");
 });
 
-test("pickDefaultProvider : premier configuré dans l'ordre mistral > gemini > mock", () => {
-  // mistral configuré → mistral
+test("pickDefaultProvider : premier configuré dans l'ordre gemini > mistral > mock", () => {
+  // gemini configuré → gemini (Gemma d'abord, pas Mistral)
   assert.equal(
     m.pickDefaultProvider([
+      { id: "gemini", configured: true },
       { id: "mistral", configured: true },
-      { id: "gemini", configured: true },
-      { id: "mock", configured: true },
-    ]),
-    "mistral",
-  );
-  // mistral absent → gemini
-  assert.equal(
-    m.pickDefaultProvider([
-      { id: "mistral", configured: false },
-      { id: "gemini", configured: true },
       { id: "mock", configured: true },
     ]),
     "gemini",
   );
+  // gemini absent → mistral
+  assert.equal(
+    m.pickDefaultProvider([
+      { id: "gemini", configured: false },
+      { id: "mistral", configured: true },
+      { id: "mock", configured: true },
+    ]),
+    "mistral",
+  );
   // aucun des deux → mock
   assert.equal(
     m.pickDefaultProvider([
-      { id: "mistral", configured: false },
       { id: "gemini", configured: false },
+      { id: "mistral", configured: false },
       { id: "mock", configured: true },
     ]),
     "mock",
@@ -74,18 +74,34 @@ test("pickDefaultProvider : premier configuré dans l'ordre mistral > gemini > m
   assert.equal(m.pickDefaultProvider([]), "mock");
 });
 
-test("ocrProviderStatusLabel : configuré / clé absente (fallback mock) / clé absente / local", () => {
+test("ocrProviderStatusLabel : recommandé / rapide-expérimental / démo locale (+ clé absente)", () => {
+  assert.equal(
+    m.ocrProviderStatusLabel({ id: "gemini", configured: true, selectable: true }, "fr"),
+    "Gemma 4 / Gemini — recommandé",
+  );
   assert.equal(
     m.ocrProviderStatusLabel({ id: "mistral", configured: true, selectable: true }, "fr"),
-    "Mistral OCR 4 — configuré",
+    "Mistral OCR 4 — rapide / expérimental",
   );
+  assert.equal(m.ocrProviderStatusLabel({ id: "mock", configured: true, selectable: true }, "fr"), "Mock OCR — démo locale");
+  // non configuré : nature conservée + statut de clé
   assert.equal(
     m.ocrProviderStatusLabel({ id: "gemini", configured: false, selectable: true }, "fr"),
-    "Gemma 4 / Gemini — clé absente (fallback mock)",
+    "Gemma 4 / Gemini — recommandé · clé absente (fallback mock)",
   );
   assert.equal(
-    m.ocrProviderStatusLabel({ id: "gemini", configured: false, selectable: false }, "fr"),
-    "Gemma 4 / Gemini — clé absente",
+    m.ocrProviderStatusLabel({ id: "mistral", configured: false, selectable: false }, "fr"),
+    "Mistral OCR 4 — rapide / expérimental · clé absente",
   );
-  assert.equal(m.ocrProviderStatusLabel({ id: "mock", configured: true, selectable: true }, "fr"), "Mock OCR — local");
+});
+
+test("parcelsAfterOcr : aucune borne → écran vidé (jamais de données de démo)", () => {
+  const empty = m.parcelsAfterOcr([]);
+  assert.deepEqual(empty.parcels, []);
+  assert.equal(empty.activeIdx, 0);
+  assert.equal(empty.emptyExtraction, true);
+  // bornes extraites → on les garde
+  const filled = m.parcelsAfterOcr([{ id: "p1" }, { id: "p2" }]);
+  assert.equal(filled.parcels.length, 2);
+  assert.equal(filled.emptyExtraction, false);
 });

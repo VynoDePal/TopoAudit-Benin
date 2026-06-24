@@ -370,3 +370,42 @@ def test_confidence_matching_normalizes_comma_and_punctuation():
     pts = extract_parcels_from_ocr_text(ocr_text, word_confidences=word_confidences)[0].points
     assert pts[0].confidence is not None and abs(pts[0].confidence - 0.8) < 1e-9  # moy(0.9,0.8,0.7)
     assert pts[1].confidence is None  # association incomplète → jamais inventée
+
+
+# --- Fusion des tables « Coordonnées suite » + continuité numérique ---------------------
+
+
+def _md_rows(start: int, end: int, x0: float = 402000.0, y0: float = 725000.0) -> str:
+    return "\n".join(f"| B{i} | {x0 + i:.2f} | {y0 + i:.2f} |" for i in range(start, end + 1))
+
+
+def test_markdown_suite_table_merges_into_single_parcel():
+    # Deux tableaux Markdown, le second précédé de « Coordonnées suite » → UNE parcelle B1..B17.
+    ocr_text = (
+        "| Borne | X | Y |\n" + _md_rows(1, 8) + "\n"
+        "Coordonnées suite\n"
+        "| Borne | X | Y |\n" + _md_rows(9, 17) + "\n"
+    )
+    parcels = extract_parcels_from_ocr_text(ocr_text)
+    assert len(parcels) == 1
+    assert [p.label for p in parcels[0].points] == [f"B{i}" for i in range(1, 18)]
+    assert len(parcels[0].points) == 17
+
+
+def test_continuation_block_merges_even_with_parcelle_heading():
+    # « Parcelle 2 » mais B9 prolonge B8 → fusion automatique (continuité numérique).
+    b1_8 = "\n".join(f"P{i} {402000.0 + i:.2f} {725000.0 + i:.2f}" for i in range(1, 9))
+    b9_17 = "\n".join(f"P{i} {402000.0 + i:.2f} {725000.0 + i:.2f}" for i in range(9, 18))
+    ocr_text = "Parcelle 1\n" + b1_8 + "\nParcelle 2\n" + b9_17
+    parcels = extract_parcels_from_ocr_text(ocr_text)
+    assert len(parcels) == 1
+    assert len(parcels[0].points) == 17
+
+
+def test_restart_numbering_creates_new_parcel():
+    # B1..B5 puis B1..B4 (numérotation qui recommence, coords différentes) → DEUX parcelles.
+    ocr_text = "| Borne | X | Y |\n" + _md_rows(1, 5) + "\n" + _md_rows(1, 4, x0=403000.0, y0=726000.0) + "\n"
+    parcels = extract_parcels_from_ocr_text(ocr_text)
+    assert len(parcels) == 2
+    assert len(parcels[0].points) == 5
+    assert len(parcels[1].points) == 4
