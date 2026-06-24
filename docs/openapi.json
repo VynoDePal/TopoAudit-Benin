@@ -379,6 +379,14 @@
             "title": "Label",
             "type": "string"
           },
+          "selectable": {
+            "default": true,
+            "examples": [
+              true
+            ],
+            "title": "Selectable",
+            "type": "boolean"
+          },
           "supports_word_confidence": {
             "examples": [
               true

@@ -9,7 +9,15 @@ import ParcelMap from "./ParcelMap";
 import { authHeaders, loadToken, saveToken, withAuth } from "../lib/authClient";
 import { extractionScoreText, isExtractionScoreNull } from "../lib/auditFormat";
 import { borneToApi, canConfirmParcel, confidenceLabel, editBorne } from "../lib/bornes";
-import { DEFAULT_OCR_PROVIDER, OCR_PROVIDERS, ocrProviderLabel, ocrRequestPath } from "../lib/ocrProviders";
+import {
+  DEFAULT_OCR_PROVIDER,
+  OCR_PROVIDERS,
+  type OcrProviderInfo,
+  ocrProviderLabel,
+  ocrProviderStatusLabel,
+  ocrRequestPath,
+  pickDefaultProvider,
+} from "../lib/ocrProviders";
 import { isTransformableCrs, toWgs84 } from "../lib/crsClient";
 import {
   confTone,
@@ -138,6 +146,8 @@ export default function TopoAuditDashboard() {
   const [auditResult, setAuditResult] = useState<AuditApiResponse | null>(null);
   // Métadonnées OCR (P0.3) : provider réel vs mock + CRS détecté, pour affichage explicite.
   const [ocrProvider, setOcrProvider] = useState<string>(DEFAULT_OCR_PROVIDER);
+  // Liste des providers OCR (GET /api/ocr/providers) : pilote le défaut + l'état du select.
+  const [ocrProviders, setOcrProviders] = useState<OcrProviderInfo[]>([]);
   const [ocrInfo, setOcrInfo] = useState<{ isMock: boolean; configured: string; provider: string; model: string | null; crs: string; scoreStatus: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -193,6 +203,21 @@ export default function TopoAuditDashboard() {
     if (!res.ok) throw new Error((await res.text().catch(() => "")) || `${method} ${path} → ${res.status}`);
     return res.json();
   };
+  // P0.1 : provider OCR par défaut piloté par le backend (premier configuré : mistral > gemini > mock).
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${apiBaseUrl}/ocr/providers`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((list: OcrProviderInfo[]) => {
+        if (cancelled || !Array.isArray(list) || list.length === 0) return;
+        setOcrProviders(list);
+        setOcrProvider(pickDefaultProvider(list));
+      })
+      .catch(() => {}); // hors-ligne / API absente : on garde le défaut statique
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl]);
   const mapFromApi = (apiParcels: any[]): Parcel[] =>
     apiParcels.map((p, i) => ({
       id: p.id ?? `p${i + 1}`,
@@ -593,6 +618,10 @@ export default function TopoAuditDashboard() {
   const panelCard: CSSProperties = { background: t.panel, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.shadow };
   const inputStyle: CSSProperties = { border: `1px solid ${t.line}`, background: t.panel2, borderRadius: 9, padding: "9px 11px", fontSize: 13.5, color: t.ink };
   const labelStyle: CSSProperties = { display: "flex", flexDirection: "column", gap: 5, fontSize: 12, color: t.sub, fontWeight: 500 };
+  // Options du select OCR : depuis le backend si chargé (statut + selectable), sinon défaut statique.
+  const ocrSelectOptions: OcrProviderInfo[] = ocrProviders.length
+    ? ocrProviders
+    : OCR_PROVIDERS.map((p) => ({ id: p.id, label: ocrProviderLabel(p.id, lang), configured: true, supports_word_confidence: false, selectable: true }));
   const eyebrow = (txt: string) => (
     <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: t.accent, marginBottom: 7 }}>{txt}</div>
   );
@@ -713,8 +742,8 @@ export default function TopoAuditDashboard() {
                       </label>
                       <label style={labelStyle}>{s.ocr_engine}
                         <select aria-label={s.ocr_engine} value={ocrProvider} onChange={(e) => setOcrProvider(e.target.value)} style={{ ...inputStyle, background: t.panel, fontSize: 13 }}>
-                          {OCR_PROVIDERS.map((p) => (
-                            <option key={p.id} value={p.id}>{ocrProviderLabel(p.id, lang)}</option>
+                          {ocrSelectOptions.map((p) => (
+                            <option key={p.id} value={p.id} disabled={p.selectable === false}>{ocrProviderStatusLabel(p, lang)}</option>
                           ))}
                         </select>
                       </label>
@@ -772,6 +801,13 @@ export default function TopoAuditDashboard() {
                       <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>CRS : {ocrInfo.crs}</span>
                       <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>{lang === "fr" ? "Statut extraction" : "Extraction status"} : {ocrInfo.scoreStatus}</span>
                     </div>
+                    {ocrInfo.isMock && ocrInfo.configured !== "mock" && (
+                      <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.45, background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b" }}>
+                        {lang === "fr"
+                          ? `⚠ Provider demandé (${ocrProviderLabel(ocrInfo.configured, lang)}) non configuré — fallback mock local.`
+                          : `⚠ Requested provider (${ocrProviderLabel(ocrInfo.configured, lang)}) not configured — local mock fallback.`}
+                      </div>
+                    )}
                     {ocrInfo.scoreStatus === "needs_human_validation" && (
                       <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, fontSize: 12.5, lineHeight: 1.45, background: "#fef3c7", color: "#92400e", border: "1px solid #f59e0b" }}>
                         {lang === "fr"

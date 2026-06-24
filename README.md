@@ -43,6 +43,23 @@ fournir une **confiance OCR machine par borne** (scores par mot) ; Gemini/Gemma 
 sans confiance par borne (« À valider »). La **validation humaine reste obligatoire** et
 distincte de la confiance OCR.
 
+#### Provider par défaut (cohérence backend / frontend)
+
+- **Backend** (`docker-compose.yml`) : `OCR_PROVIDER=gemini` — c'est le défaut **serveur**
+  des appels OCR **sans `?provider=`** (le fallback mock s'applique en local si la clé
+  Gemini est absente).
+- **Frontend** : le select « Moteur OCR » choisit son défaut **dynamiquement** via
+  `GET /api/ocr/providers` — premier provider **configuré** dans l'ordre **Mistral OCR 4
+  → Gemma 4/Gemini → Mock OCR**. L'UI envoie toujours `?provider=` explicitement, donc
+  c'est ce défaut frontend qui prime pour un import via l'interface.
+- En **local**, un provider sans clé reste sélectionnable mais l'OCR **retombe sur le
+  mock** (un bandeau « Provider demandé non configuré — fallback mock local » l'indique).
+  En **staging/production**, un provider non configuré est **désactivé** dans le select
+  (pas de fallback silencieux : l'API répond `503`).
+- Pour tester **Mistral réellement**, renseigner `MISTRAL_API_KEY` (sinon fallback mock
+  en local). Pour **Gemini**, renseigner `GEMINI_API_KEY`. Sans aucune clé : tout passe
+  par le **mock** (la démo reste exécutable).
+
 ### 2. Lancer toute la stack
 
 ```bash

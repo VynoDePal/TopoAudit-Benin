@@ -1,44 +1,54 @@
-# Comparaison des providers OCR (Gemini/Gemma vs Mistral OCR 4)
+# Comparaison des providers OCR — Gemma 4 / Gemini vs Mistral OCR 4
 
-Méthodologie et gabarit de comparaison des providers OCR sur des plans topographiques
-réels. **Les chiffres ci-dessous ne sont PAS pré-remplis** : ils doivent provenir d'un run
-réel (clé du provider + jeu de levées réelles gitignoré dans `datasets/ocr_real/`). Ne
-jamais committer de scans/coordonnées réels — uniquement les métriques agrégées.
+Comparaison **réelle** sur les **mêmes 5 levées réelles** (gitignorées ; seules les
+métriques agrégées sont publiées). Détails : [ocr_benchmark_gemini.md](ocr_benchmark_gemini.md)
+et [ocr_benchmark_mistral.md](ocr_benchmark_mistral.md).
 
-## Comment produire les rapports
+- Date : 2026-06-24
+- Jeu : `datasets/ocr_real/manifest_real.json` (5 cas, vérité terrain) — `images/` non committées.
+- Reproduire :
+  ```bash
+  python scripts/evaluate_real_ocr.py --dataset datasets/ocr_real/manifest_real.json --provider gemini  --delay 8
+  python scripts/evaluate_real_ocr.py --dataset datasets/ocr_real/manifest_real.json --provider mistral --delay 4
+  ```
 
-Le script `apps/api/scripts/evaluate_real_ocr.py` accepte `--provider` :
+## Tableau comparatif
 
-```bash
-# Gemini / Gemma 4 (clé GEMINI_API_KEY)
-python scripts/evaluate_real_ocr.py --provider gemini --delay 8 > ../../docs/ocr_benchmark_gemini.md.json
-# Mistral OCR 4 (clé MISTRAL_API_KEY)
-python scripts/evaluate_real_ocr.py --provider mistral --delay 4 > ../../docs/ocr_benchmark_mistral.md.json
-```
-
-Le script sort proprement (`SKIP`, code 0) si la clé du provider est absente — il n'est
-jamais exécuté en CI. La sortie JSON contient les métriques agrégées + `api_failure_rate`
-+ `avg_seconds_per_scan` + la liste des erreurs (sans données sensibles).
-
-## Métriques comparées
-
-| Métrique | Gemini / Gemma 4 | Mistral OCR 4 |
+| Métrique | Gemma 4 / Gemini | Mistral OCR 4 |
 | --- | --- | --- |
-| `point_recall` | _à exécuter_ | _à exécuter_ |
-| `coordinate_mae` | _à exécuter_ | _à exécuter_ |
-| `surface_accuracy` | _à exécuter_ | _à exécuter_ |
-| `parcel_count_accuracy` | _à exécuter_ | _à exécuter_ |
-| `crs_detection_accuracy` | _à exécuter_ | _à exécuter_ |
-| Taux d'échec API (`api_failure_rate`) | _à exécuter_ | _à exécuter_ |
-| Temps moyen / scan (`avg_seconds_per_scan`) | _à exécuter_ | _à exécuter_ |
-| Coût estimé (si disponible) | n/a | ~4 $/1000 pages (à vérifier) |
-| Confiance OCR par borne | non fournie (« À valider ») | scores par mot (si exploitables) |
+| Scans réussis | **1 / 5** | **5 / 5** |
+| `api_failure_rate` | 0,80 (4× `502`) | **0,00** |
+| `avg_seconds_per_scan` | 30,79 s | **3,39 s** |
+| `point_recall` | 1,0 *(n=1)* | 0,80 *(n=5)* |
+| `coordinate_mae` | 0,0 m *(n=1)* | 0,001 m *(n=5)* |
+| `surface_accuracy` | 1,0 *(n=1)* | 0,80 *(n=5)* |
+| `parcel_count_accuracy` | 1,0 *(n=1)* | 0,80 *(n=5)* |
+| `crs_detection_accuracy` | 1,0 *(n=1)* | 0,80 *(n=5)* |
+| Confiance OCR par borne | non | **oui** (word scores) |
+| Coût indicatif | dépend du compte Google | ~4 $/1000 pages (à vérifier) |
 
-## Notes
+> ⚠️ Les scores de précision Gemini portent sur **1 seul scan réussi** (les 4 autres en
+> `502`) → non représentatifs. Mistral est évalué sur les **5 scans**.
 
-- **Confiance OCR machine** : Mistral peut fournir une confiance par borne (agrégat des
-  word scores). Gemini/Gemma n'en fournit pas → confiance « À valider » par borne.
-- La confiance OCR n'est **jamais** une décision : la **validation humaine reste
-  obligatoire** et distincte (`human_validated`).
-- Tarifs/quotas Mistral : voir [mistral_ocr_4.md](external_services/mistral_ocr_4.md) —
-  à vérifier avant toute mise en production.
+## Conclusion
+
+- **Provider recommandé pour la démo : Mistral OCR 4.** Fiabilité 100 % (vs 20 % pour
+  Gemini ici), ~9× plus rapide, et confiance OCR par borne. Une démo métier ne peut pas
+  se permettre 80 % d'échecs API.
+- **Provider recommandé par défaut : Mistral OCR 4 lorsque `MISTRAL_API_KEY` est
+  configurée** — c'est déjà le défaut **frontend dynamique** (ordre Mistral → Gemini →
+  Mock via `GET /api/ocr/providers`). Sans clé Mistral : Gemini si configuré, sinon mock.
+- **Quand préférer Gemini** : si l'on dispose d'un **compte Google payant** (sans le
+  quota free-tier responsable des `502`), Gemini est exact sur les cas traités ; il reste
+  utile en repli ou pour comparaison. À ré-évaluer avec une clé non limitée.
+
+## Limites
+
+- **Échantillon réel = 5 scans** (gitignorés). Conclusions indicatives, pas statistiques.
+- **Gemini pénalisé par le quota free-tier** (`502`) : `api_failure_rate` reflète la clé,
+  pas seulement le modèle. À refaire avec un compte payant pour une comparaison équitable.
+- **Mistral n'est pas infaillible** : leve106 a échoué le parsing (CRS non détecté, 0
+  borne). L'OCR n'est **jamais décisionnel** — la **validation humaine de chaque borne
+  reste obligatoire** (colonne « Validé »), et la confiance OCR machine reste distincte de
+  `human_validated`.
+- **Coûts Mistral** à confirmer avant mise en production (tarifs susceptibles d'évoluer).

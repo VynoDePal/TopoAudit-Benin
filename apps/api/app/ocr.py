@@ -61,6 +61,9 @@ class OcrProviderInfo(BaseModel):
     label: str = Field(examples=["Mistral OCR 4"])
     configured: bool = Field(examples=[True])
     supports_word_confidence: bool = Field(examples=[True])
+    # selectable : utilisable côté UI = configuré OU fallback mock autorisé (local).
+    # En staging/production, un provider non configuré n'est PAS selectable.
+    selectable: bool = Field(default=True, examples=[True])
 
 
 class OcrResult(BaseModel):
@@ -253,15 +256,19 @@ _PROVIDER_SUPPORTS_WORD_CONFIDENCE = {"gemini": False, "mistral": True, "mock": 
 
 def list_ocr_providers() -> list[OcrProviderInfo]:
     """Liste des providers OCR sélectionnables + leur état (sans jamais exposer de clé)."""
+    fallback_allowed = _allows_unconfigured_ocr_fallback()
     providers: list[OcrProviderInfo] = []
     for provider_id in _PUBLIC_PROVIDERS:
         factory = OCR_PROVIDER_FACTORIES[provider_id]
+        configured = factory().is_configured()
         providers.append(
             OcrProviderInfo(
                 id=provider_id,
                 label=_PROVIDER_LABELS[provider_id],
-                configured=factory().is_configured(),
+                configured=configured,
                 supports_word_confidence=_PROVIDER_SUPPORTS_WORD_CONFIDENCE[provider_id],
+                # Utilisable si configuré, ou si le fallback mock est autorisé (local).
+                selectable=configured or fallback_allowed,
             )
         )
     return providers

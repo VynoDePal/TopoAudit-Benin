@@ -107,8 +107,91 @@ def _parse_point_tokens(line: str) -> tuple[str, str, str] | None:
     return _parse_simple_tokens(line) or _parse_markdown_tokens(line)
 
 
+# En-tête de tableau Markdown : noms de colonnes reconnus (insensible casse/ponctuation).
+_HEADER_LABEL_NAMES = {"borne", "bornes", "bnes", "point", "points", "label", "sommet", "pt"}
+_HEADER_X_NAMES = {"x", "xest", "xeast", "easting", "est", "east"}
+_HEADER_Y_NAMES = {"y", "ynord", "ynorth", "northing", "nord", "north"}
+
+
+def _normalize_header_cell(cell: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", cell.lower())
+
+
+def _split_markdown_cells(line: str) -> list[str]:
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    return [cell for cell in cells if cell != ""]
+
+
+def _detect_markdown_header(cells: list[str]) -> dict[str, int] | None:
+    """Mappe un en-tête `| Borne | X | Y |` (dans N'IMPORTE quel ordre) → indices de colonnes.
+
+    Détecte X et Y par nom (variantes : X(EST)/Easting, Y(NORD)/Northing…) ; le libellé par
+    nom, sinon la première colonne restante. None si X ou Y introuvable (pas un en-tête)."""
+    label_i = x_i = y_i = None
+    for index, cell in enumerate(cells):
+        norm = _normalize_header_cell(cell)
+        if x_i is None and norm in _HEADER_X_NAMES:
+            x_i = index
+        elif y_i is None and norm in _HEADER_Y_NAMES:
+            y_i = index
+        elif label_i is None and norm in _HEADER_LABEL_NAMES:
+            label_i = index
+    if x_i is None or y_i is None:
+        return None
+    if label_i is None:
+        remaining = [i for i in range(len(cells)) if i not in (x_i, y_i)]
+        if not remaining:
+            return None
+        label_i = remaining[0]
+    return {"label": label_i, "x": x_i, "y": y_i}
+
+
+def _parse_markdown_row_with_header(cells: list[str], header: dict[str, int]) -> tuple[str, str, str] | None:
+    """Données d'une ligne Markdown via le mapping d'en-tête (colonnes réordonnées)."""
+    if max(header.values()) >= len(cells):
+        return None
+    x_raw, y_raw = cells[header["x"]], cells[header["y"]]
+    if not _MD_NUMBER_RE.match(x_raw) or not _MD_NUMBER_RE.match(y_raw):
+        return None  # ligne non-données (séparateur, ré-en-tête, total…)
+    return cells[header["label"]], x_raw, y_raw
+
+
+def _parse_line_with_state(
+    line: str, md_header: dict[str, int] | None
+) -> tuple[tuple[str, str, str] | None, dict[str, int] | None]:
+    """Parse une ligne en tenant compte d'un éventuel en-tête Markdown mémorisé.
+
+    Retourne (tokens, md_header) — md_header est mis à jour si un en-tête est rencontré."""
+    stripped = line.strip()
+    if "|" in stripped:
+        cells = _split_markdown_cells(stripped)
+        if cells and all(set(cell) <= set("-:= ") for cell in cells):
+            return None, md_header  # séparateur Markdown
+        if len(cells) >= 3:
+            header = _detect_markdown_header(cells)
+            if header is not None:
+                return None, header  # en-tête : mémorise l'ordre, pas de données
+        if md_header is not None:
+            return _parse_markdown_row_with_header(cells, md_header), md_header
+        return _parse_markdown_tokens(line), md_header  # pas d'en-tête connu → positionnel
+    return _parse_simple_tokens(line), md_header
+
+
+def _normalize_conf_token(value: object) -> str:
+    """Normalise un token pour l'appariement des confiances OCR (robuste aux variantes).
+
+    - retire pipes/ponctuation périphérique (garde . et - internes) ;
+    - virgule décimale → point (« 402119,76 » → « 402119.76 ») ;
+    - supprime les espaces internes des nombres (« 402 119,76 » → « 402119.76 ») ;
+    - minuscule. Permet de matcher « B1, » / « (402119,76) » / « 402 119.76 »."""
+    text = re.sub(r"\s+", "", str(value).lower())  # minuscule + espaces internes (nombres scindés)
+    text = re.sub(r"(?<=\d),(?=\d)", ".", text)  # virgule décimale INTERNE → point
+    text = re.sub(r"^[^\w]+|[^\w]+$", "", text)  # ponctuation/pipe périphérique (garde . interne)
+    return text
+
+
 def _build_confidence_lookup(word_confidences: list[dict] | None) -> dict[str, float]:
-    """Index {texte → confiance} depuis les word_confidence_scores (ex. Mistral)."""
+    """Index {token normalisé → confiance} depuis les word_confidence_scores (ex. Mistral)."""
     lookup: dict[str, float] = {}
     for entry in word_confidences or []:
         if not isinstance(entry, dict):
@@ -116,14 +199,14 @@ def _build_confidence_lookup(word_confidences: list[dict] | None) -> dict[str, f
         text_value = entry.get("text")
         score = entry.get("confidence")
         if isinstance(text_value, str) and isinstance(score, (int, float)) and not isinstance(score, bool):
-            key = text_value.strip()
+            key = _normalize_conf_token(text_value)
             if key and key not in lookup:
                 lookup[key] = float(score)
     return lookup
 
 
 def _confidence_for_tokens(tokens: tuple[str, str, str], lookup: dict[str, float]) -> float | None:
-    """Confiance OCR d'une borne = MOYENNE des confiances de label + X + Y.
+    """Confiance OCR d'une borne = MOYENNE des confiances (normalisées) de label + X + Y.
 
     Stratégie prudente : si UN seul token n'a pas de score associable, on renvoie None
     (jamais de confiance inventée). Distincte de la validation humaine."""
@@ -131,9 +214,7 @@ def _confidence_for_tokens(tokens: tuple[str, str, str], lookup: dict[str, float
         return None
     scores: list[float] = []
     for token in tokens:
-        score = lookup.get(token)
-        if score is None:
-            score = lookup.get(token.replace(",", "."))
+        score = lookup.get(_normalize_conf_token(token))
         if score is None:
             return None  # association impossible → ne jamais inventer
         scores.append(score)
@@ -157,6 +238,8 @@ def extract_parcels_from_ocr_text(
     current_label: str | None = None
     current_surface: int | None = None
     current_points: list[ExtractedSurveyPoint] = []
+    # Ordre de colonnes du dernier en-tête Markdown rencontré (colonnes réordonnées).
+    md_header: dict[str, int] | None = None
 
     def flush() -> None:
         nonlocal current_label, current_surface, current_points
@@ -182,7 +265,7 @@ def extract_parcels_from_ocr_text(
             if parsed_surface is not None:
                 current_surface = parsed_surface
 
-        tokens = _parse_point_tokens(line)
+        tokens, md_header = _parse_line_with_state(line, md_header)
         if tokens is None:
             continue
         point = ExtractedSurveyPoint(
