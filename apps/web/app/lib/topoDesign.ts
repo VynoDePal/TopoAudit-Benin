@@ -52,7 +52,7 @@ export const STR: Record<LangKey, Strings> = {
     val_title: "Validation humaine des coordonnées", val_sub: "Corrigez les bornes extraites avant tout calcul. Aucun audit n’est lancé sans votre confirmation explicite.",
     scan: "Plan source", scan_ph: "aperçu du scan",
     surface_ocr: "Surface OCR brute", surface_m2: "Surface déclarée (m²)", crs: "Système de coordonnées", crs_local: "Coordonnées locales",
-    c_borne: "Borne", c_x: "X (Est)", c_y: "Y (Nord)", c_conf: "Confiance", remove: "Retirer", add_borne: "Ajouter une borne",
+    c_borne: "Borne", c_x: "X (Est)", c_y: "Y (Nord)", c_conf: "Confiance", c_validated: "Validé", remove: "Retirer", add_borne: "Ajouter une borne",
     live_area: "Surface calc.", live_per: "Périmètre", live_delta: "Écart surface", live_valid: "Validité",
     confirm: "Confirmer la parcelle", confirmed: "Parcelle confirmée", to_confirm: "À confirmer",
     btn_audit: "Lancer l’audit",
@@ -82,7 +82,7 @@ export const STR: Record<LangKey, Strings> = {
     val_title: "Human coordinate validation", val_sub: "Correct the extracted corners before any computation. No audit runs without your explicit confirmation.",
     scan: "Source plan", scan_ph: "scan preview",
     surface_ocr: "Raw OCR area", surface_m2: "Declared area (m²)", crs: "Coordinate system", crs_local: "Local coordinates",
-    c_borne: "Corner", c_x: "X (East)", c_y: "Y (North)", c_conf: "Confidence", remove: "Remove", add_borne: "Add a corner",
+    c_borne: "Corner", c_x: "X (East)", c_y: "Y (North)", c_conf: "Confidence", c_validated: "Validated", remove: "Remove", add_borne: "Add a corner",
     live_area: "Calc. area", live_per: "Perimeter", live_delta: "Area delta", live_valid: "Validity",
     confirm: "Confirm parcel", confirmed: "Parcel confirmed", to_confirm: "To confirm",
     btn_audit: "Run audit",
@@ -113,7 +113,9 @@ export const fmt = (n: number | null | undefined, d: number): string => {
   return n.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
 };
 
-export type Point = { label: string; x: string; y: string; confidence: number };
+// confidence = qualité OCR machine (null si non fournie — JAMAIS 0 par défaut).
+// validated = validation humaine de la borne (distincte de la confiance OCR).
+export type Point = { label: string; x: string; y: string; confidence: number | null; validated?: boolean };
 
 export type Geom = {
   valid: boolean;

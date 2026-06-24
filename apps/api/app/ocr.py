@@ -28,6 +28,9 @@ class OcrPoint(BaseModel):
     label: str
     x: float
     y: float
+    # Confiance OCR machine par borne : None tant que le provider n'en fournit pas
+    # (ne JAMAIS forcer 0). Distincte de la validation humaine.
+    confidence: float | None = None
 
 
 class OcrParsedParcel(BaseModel):

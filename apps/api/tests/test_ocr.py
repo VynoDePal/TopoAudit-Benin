@@ -7,7 +7,14 @@ from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
-from app.ocr import MOCK_OCR_TEXT, extract_text_from_document, get_ocr_provider, ocr_rate_limiter
+from app.ocr import MOCK_OCR_TEXT, OcrPoint, extract_text_from_document, get_ocr_provider, ocr_rate_limiter
+
+
+def test_ocr_point_confidence_defaults_to_none_and_accepts_none():
+    assert OcrPoint(label="B1", x=1.0, y=2.0).confidence is None
+    assert OcrPoint(label="B1", x=1.0, y=2.0, confidence=None).confidence is None
+    # une vraie valeur reste conservée (ne devient pas None).
+    assert OcrPoint(label="B1", x=1.0, y=2.0, confidence=0.0).confidence == 0.0
 
 
 class FakeResult:
@@ -270,6 +277,8 @@ def test_ocr_returns_mock_text_when_azure_key_is_missing():
     assert body["project_id"] == "project-1"
     assert [p["label"] for p in body["parsed_parcels"]] == ["Parcelle A"]
     assert body["parsed_parcels"][0]["point_count"] == 4
+    # OCR sans confiance par borne → confidence=null (jamais 0).
+    assert body["parsed_parcels"][0]["points"][0]["confidence"] is None
 
 
 def test_ocr_rejects_document_from_another_project():
@@ -390,6 +399,8 @@ def test_ocr_body_endpoint_reuses_scoped_document_validation_and_mock_provider()
     assert body["project_id"] == "project-1"
     assert [p["label"] for p in body["parsed_parcels"]] == ["Parcelle A"]
     assert body["parsed_parcels"][0]["point_count"] == 4
+    # OCR sans confiance par borne → confidence=null (jamais 0).
+    assert body["parsed_parcels"][0]["points"][0]["confidence"] is None
     assert project.status == "OCR_EXTRACTED"
 
 
