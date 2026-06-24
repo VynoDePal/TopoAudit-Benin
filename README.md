@@ -27,9 +27,14 @@ GEMINI_API_KEY=...votre-cle...
 GEMINI_MODEL=gemma-4-31b-it
 ```
 
-Le **moteur OCR est sélectionnable à l'étape Import** : **Gemma 4 / Gemini**,
-**Mistral OCR 4**, ou **Mock OCR** (local). Le choix est envoyé au backend
-(`?provider=`). Pour Mistral, renseigner dans `.env` (voir
+Le **moteur OCR est sélectionnable à l'étape Import** :
+- **Gemma 4 / Gemini — recommandé** pour les plans topographiques scannés (prompt
+  spécialisé, plus fiable sur les coordonnées visibles) ;
+- **Mistral OCR 4 — rapide / expérimental** : plus rapide et peut fournir une confiance
+  par borne, mais peut mal structurer les tables de coordonnées sur certains plans ;
+- **Mock OCR — démo locale**.
+
+Le choix est envoyé au backend (`?provider=`). Pour Mistral, renseigner dans `.env` (voir
 [docs/external_services/mistral_ocr_4.md](docs/external_services/mistral_ocr_4.md)) —
 **ne jamais committer/logger `MISTRAL_API_KEY`** :
 
@@ -49,16 +54,21 @@ distincte de la confiance OCR.
   des appels OCR **sans `?provider=`** (le fallback mock s'applique en local si la clé
   Gemini est absente).
 - **Frontend** : le select « Moteur OCR » choisit son défaut **dynamiquement** via
-  `GET /api/ocr/providers` — premier provider **configuré** dans l'ordre **Mistral OCR 4
-  → Gemma 4/Gemini → Mock OCR**. L'UI envoie toujours `?provider=` explicitement, donc
-  c'est ce défaut frontend qui prime pour un import via l'interface.
+  `GET /api/ocr/providers` — premier provider **configuré** dans l'ordre **Gemma 4/Gemini
+  → Mistral OCR 4 → Mock OCR** (Gemma recommandé en premier). L'UI envoie toujours
+  `?provider=` explicitement.
 - En **local**, un provider sans clé reste sélectionnable mais l'OCR **retombe sur le
   mock** (un bandeau « Provider demandé non configuré — fallback mock local » l'indique).
   En **staging/production**, un provider non configuré est **désactivé** dans le select
   (pas de fallback silencieux : l'API répond `503`).
-- Pour tester **Mistral réellement**, renseigner `MISTRAL_API_KEY` (sinon fallback mock
-  en local). Pour **Gemini**, renseigner `GEMINI_API_KEY`. Sans aucune clé : tout passe
-  par le **mock** (la démo reste exécutable).
+- Pour **Gemini**, renseigner `GEMINI_API_KEY`. Pour tester **Mistral**, renseigner
+  `MISTRAL_API_KEY` (sinon fallback mock en local). Sans aucune clé : tout passe par le
+  **mock** (la démo reste exécutable).
+
+> **Choix du provider** : Gemma/Gemini est le défaut recommandé pour les plans
+> topographiques. Mistral OCR 4 est disponible (rapide, **expérimental**). Le choix
+> définitif reste à **valider par un benchmark sur scans réels** (voir
+> [docs/ocr_provider_comparison.md](docs/ocr_provider_comparison.md)).
 
 ### 2. Lancer toute la stack
 

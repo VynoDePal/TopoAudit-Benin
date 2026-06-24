@@ -16,6 +16,7 @@ import {
   ocrProviderLabel,
   ocrProviderStatusLabel,
   ocrRequestPath,
+  parcelsAfterOcr,
   pickDefaultProvider,
 } from "../lib/ocrProviders";
 import { isTransformableCrs, toWgs84 } from "../lib/crsClient";
@@ -291,11 +292,12 @@ export default function TopoAuditDashboard() {
       });
       const crsForParcels = crsStatusToDisplay(ocr.detected_crs);
       const mapped = mapFromApi((ocr.parsed_parcels ?? []).map((p: any) => ({ ...p, detected_crs: crsForParcels })));
-      if (mapped.length) {
-        setParcels(mapped);
-        setActiveIdx(0);
-      } else {
-        setErrorMsg(lang === "fr" ? "OCR : aucune borne extraite — corrigez/ajoutez manuellement." : "OCR: no corner extracted — correct/add manually.");
+      // P0.3 : ne JAMAIS laisser les parcelles de démo après un OCR réel échoué → on vide.
+      const { parcels: nextParcels, activeIdx: nextIdx, emptyExtraction } = parcelsAfterOcr(mapped);
+      setParcels(nextParcels);
+      setActiveIdx(nextIdx);
+      if (emptyExtraction) {
+        setErrorMsg(lang === "fr" ? "OCR : aucune borne exploitable extraite." : "OCR: no usable corner extracted.");
       }
       setStage("validate");
     } catch (e) {
@@ -806,6 +808,13 @@ export default function TopoAuditDashboard() {
                         {lang === "fr"
                           ? `⚠ Provider demandé (${ocrProviderLabel(ocrInfo.configured, lang)}) non configuré — fallback mock local.`
                           : `⚠ Requested provider (${ocrProviderLabel(ocrInfo.configured, lang)}) not configured — local mock fallback.`}
+                      </div>
+                    )}
+                    {ocrInfo.provider === "mistral" && (
+                      <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, fontSize: 12, lineHeight: 1.45, background: t.panel2, color: t.sub, border: `1px solid ${t.line}` }}>
+                        {lang === "fr"
+                          ? "Mistral est rapide mais peut mal structurer les tables de coordonnées. Vérifiez chaque borne."
+                          : "Mistral is fast but may mis-structure coordinate tables. Check every corner."}
                       </div>
                     )}
                     {ocrInfo.scoreStatus === "needs_human_validation" && (

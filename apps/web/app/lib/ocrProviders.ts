@@ -9,9 +9,9 @@ export const OCR_PROVIDERS: { id: OcrProviderId; labelFr: string; labelEn: strin
   { id: "mock", labelFr: "Mock OCR", labelEn: "Mock OCR" },
 ];
 
-// Défaut = Mistral OCR 4 (meilleure extraction + confiance OCR par borne). Surchargeable
-// dans le select « Moteur OCR » à l'import.
-export const DEFAULT_OCR_PROVIDER: OcrProviderId = "mistral";
+// Défaut = Gemma 4 / Gemini, recommandé pour plans topographiques scannés (prompt
+// spécialisé, plus fiable sur les coordonnées visibles). Surchargeable dans le select.
+export const DEFAULT_OCR_PROVIDER: OcrProviderId = "gemini";
 
 export function ocrProviderLabel(id: string, lang: "fr" | "en" = "fr"): string {
   const provider = OCR_PROVIDERS.find((p) => p.id === id);
@@ -30,26 +30,42 @@ export type OcrProviderInfo = {
   selectable?: boolean;
 };
 
-// Défaut dynamique : premier provider CONFIGURÉ dans l'ordre mistral > gemini > mock
-// (mock toujours configuré → il y a toujours un défaut).
+// Défaut dynamique : premier provider CONFIGURÉ dans l'ordre gemini > mistral > mock
+// (Gemma recommandé d'abord ; mock toujours configuré → il y a toujours un défaut).
 export function pickDefaultProvider(providers: OcrProviderInfo[]): OcrProviderId {
-  for (const id of ["mistral", "gemini", "mock"] as OcrProviderId[]) {
+  for (const id of ["gemini", "mistral", "mock"] as OcrProviderId[]) {
     const p = providers.find((x) => x.id === id);
     if (p && p.configured) return id;
   }
   return "mock";
 }
 
-// Libellé d'option : « Mistral OCR 4 — configuré / clé absente (fallback mock) / clé absente ».
+// Nature / recommandation du provider (descriptif, indépendant de la config).
+export function ocrProviderNature(id: string, lang: "fr" | "en" = "fr"): string {
+  if (id === "gemini") return lang === "fr" ? "recommandé" : "recommended";
+  if (id === "mistral") return lang === "fr" ? "rapide / expérimental" : "fast / experimental";
+  if (id === "mock") return lang === "fr" ? "démo locale" : "local demo";
+  return "";
+}
+
+// Libellé d'option : « Gemma 4 / Gemini — recommandé », « Mistral OCR 4 — rapide /
+// expérimental », « Mock OCR — démo locale » (+ « · clé absente » si non configuré).
 export function ocrProviderStatusLabel(p: OcrProviderInfo, lang: "fr" | "en" = "fr"): string {
-  const base = ocrProviderLabel(p.id, lang);
-  if (p.id === "mock") return `${base} — ${lang === "fr" ? "local" : "local"}`;
-  if (p.configured) return `${base} — ${lang === "fr" ? "configuré" : "configured"}`;
-  if (p.selectable) return `${base} — ${lang === "fr" ? "clé absente (fallback mock)" : "key missing (mock fallback)"}`;
-  return `${base} — ${lang === "fr" ? "clé absente" : "key missing"}`;
+  const nature = ocrProviderNature(p.id, lang);
+  const head = nature ? `${ocrProviderLabel(p.id, lang)} — ${nature}` : ocrProviderLabel(p.id, lang);
+  if (p.id === "mock" || p.configured) return head;
+  if (p.selectable) return `${head} · ${lang === "fr" ? "clé absente (fallback mock)" : "key missing (mock fallback)"}`;
+  return `${head} · ${lang === "fr" ? "clé absente" : "key missing"}`;
 }
 
 // Chemin OCR avec provider en query param (n'altère pas le workflow par défaut).
 export function ocrRequestPath(projectId: string, documentId: string, provider: string): string {
   return `/projects/${projectId}/documents/${documentId}/ocr?provider=${encodeURIComponent(provider)}`;
+}
+
+// Après un OCR RÉEL : si aucune borne exploitable, on vide l'écran (jamais de données de
+// démo après un upload). Sinon on affiche les parcelles extraites.
+export function parcelsAfterOcr<T>(mapped: T[]): { parcels: T[]; activeIdx: number; emptyExtraction: boolean } {
+  if (mapped.length === 0) return { parcels: [], activeIdx: 0, emptyExtraction: true };
+  return { parcels: mapped, activeIdx: 0, emptyExtraction: false };
 }

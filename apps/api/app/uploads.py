@@ -65,6 +65,9 @@ _COORDINATE_LINE_PATTERN = re.compile(
 )
 _PARCEL_HEADING_PATTERN = re.compile(r"\bparcelle\s+(?P<label>[A-Za-z0-9_-]+)", re.IGNORECASE)
 _SURFACE_LINE_PATTERN = re.compile(r"\b(surface|superficie)\b", re.IGNORECASE)
+# Marqueur de table de continuation (« Coordonnées suite », « coordonnées (suite) », « suite »)
+# → les bornes qui suivent prolongent la parcelle précédente (pas de nouvelle parcelle).
+_SUITE_PATTERN = re.compile(r"\bsuite\b", re.IGNORECASE)
 # Tableau Markdown (Mistral OCR) : `| B1 | 402119.76 | 725732.25 |`, `| B.1 | ... |`.
 # Un nombre de coordonnée = au moins 2 chiffres, décimale . ou , optionnelle.
 _MD_NUMBER_RE = re.compile(r"^-?\d{2,}(?:[.,]\d+)?$")
@@ -221,6 +224,21 @@ def _confidence_for_tokens(tokens: tuple[str, str, str], lookup: dict[str, float
     return sum(scores) / len(scores)
 
 
+def _label_number(label: str) -> int | None:
+    """Numéro d'une borne (1er groupe de chiffres) : « B9 » → 9, « B.1 » → 1, « P12 » → 12."""
+    match = re.search(r"\d+", label)
+    return int(match.group()) if match else None
+
+
+def _is_continuation(points: list[ExtractedSurveyPoint], new_label: str) -> bool:
+    """Vrai si ``new_label`` prolonge la séquence (ex. parcelle finit B8, nouveau bloc B9)."""
+    if not points:
+        return False
+    last = _label_number(points[-1].label)
+    new = _label_number(new_label)
+    return last is not None and new is not None and new == last + 1
+
+
 def _parse_coordinate_line(line: str) -> ExtractedSurveyPoint | None:
     """Compat : conserve l'API d'origine (sans confiance)."""
     tokens = _parse_point_tokens(line)
@@ -240,6 +258,12 @@ def extract_parcels_from_ocr_text(
     current_points: list[ExtractedSurveyPoint] = []
     # Ordre de colonnes du dernier en-tête Markdown rencontré (colonnes réordonnées).
     md_header: dict[str, int] | None = None
+    # Décision de séparation DIFFÉRÉE : un en-tête « Parcelle X » ne flush pas tout de
+    # suite — on décide à la 1ʳᵉ borne du bloc (pour pouvoir fusionner une continuation).
+    pending_label: str | None = None
+    pending_surface: int | None = None
+    # Marqueur « suite » vu → la prochaine borne fusionne avec la parcelle courante.
+    merge_continuation = False
 
     def flush() -> None:
         nonlocal current_label, current_surface, current_points
@@ -255,15 +279,21 @@ def extract_parcels_from_ocr_text(
         if not line:
             continue
 
+        if _SUITE_PATTERN.search(line):
+            merge_continuation = True
+
         heading = _PARCEL_HEADING_PATTERN.search(line)
         if heading:
-            flush()
-            current_label = f"Parcelle {heading.group('label')}"
+            # Différé : on mémorise le libellé, la décision merge/split se prend à la borne.
+            pending_label = f"Parcelle {heading.group('label')}"
 
         if _SURFACE_LINE_PATTERN.search(line):
             parsed_surface = parse_surface_to_m2(line)
             if parsed_surface is not None:
-                current_surface = parsed_surface
+                if pending_label is not None:
+                    pending_surface = parsed_surface  # surface du bloc à venir
+                else:
+                    current_surface = parsed_surface
 
         tokens, md_header = _parse_line_with_state(line, md_header)
         if tokens is None:
@@ -275,16 +305,34 @@ def extract_parcels_from_ocr_text(
             confidence=_confidence_for_tokens(tokens, lookup),
         )
 
+        merge = merge_continuation
+        merge_continuation = False
+        # En-tête « Parcelle » en attente : nouvelle parcelle SAUF si la borne prolonge la
+        # séquence (B9 après B8) ou si un marqueur « suite » force la fusion.
+        if pending_label is not None:
+            if merge or _is_continuation(current_points, point.label):
+                if current_label is None:
+                    current_label = pending_label
+                if current_surface is None and pending_surface is not None:
+                    current_surface = pending_surface
+            else:
+                flush()
+                current_label = pending_label
+                current_surface = pending_surface
+            pending_label = None
+            pending_surface = None
+
         existing = next((p for p in current_points if p.label == point.label), None)
         if existing is not None:
             # Même label déjà présent dans la parcelle courante : si les coordonnées sont
             # ~identiques, c'est un ÉCHO (modèle vision verbeux qui re-liste les mêmes
             # bornes lors de sa relecture) → on ignore (sinon le polygone est corrompu par
-            # des points dupliqués). Si les coordonnées diffèrent, c'est une nouvelle
-            # parcelle qui réutilise les labels (B1, B2, …) → on flush.
+            # des points dupliqués). Si les coordonnées diffèrent, c'est un redémarrage de
+            # numérotation (B1, B2, …) → nouvelle parcelle (sauf marqueur « suite »).
             if abs(existing.x - point.x) <= 1.0 and abs(existing.y - point.y) <= 1.0:
                 continue
-            flush()
+            if not merge:
+                flush()
         if current_label is None:
             current_label = f"Parcelle {len(parcels) + 1}"
         current_points.append(point)
