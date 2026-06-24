@@ -39,6 +39,8 @@ class ParcelAuditResult(BaseModel):
     # n'est disponible : on n'invente jamais de score.
     extraction_score: int | None = Field(default=None, ge=0, le=100)
     extraction_score_status: str = SCORE_STATUS_COMPUTED
+    # Indicateur SÉPARÉ de la validation humaine — n'influence PAS extraction_score.
+    human_validated: bool = False
     declared_surface_m2: float | None = Field(default=None, gt=0)
     calculated_surface_m2: float | None = Field(default=None, ge=0)
     invalid_geometry: bool = False
@@ -51,6 +53,7 @@ class AuditResponse(ProjectWorkflowResponse):
     audit_id: str
     extraction_score: int | None = Field(default=None, ge=0, le=100)
     extraction_score_status: str = SCORE_STATUS_COMPUTED
+    human_validated: bool = False
     technical_score: int = Field(ge=0, le=100)
     risk_level: str
     warnings: list[str]
@@ -60,6 +63,7 @@ class AuditResponse(ProjectWorkflowResponse):
 class _AuditInputs(BaseModel):
     extraction_score: int | None = Field(default=None, ge=0, le=100)
     extraction_score_status: str = SCORE_STATUS_NEEDS_HUMAN_VALIDATION
+    human_validated: bool = False
     declared_surface_m2: float | None = Field(default=None, gt=0)
     calculated_surface_m2: float | None = Field(default=None, ge=0)
     invalid_geometry: bool = False
@@ -239,7 +243,8 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                     p.detected_crs AS detected_crs,
                     sp.source_x AS source_x,
                     sp.source_y AS source_y,
-                    sp.confidence AS confidence
+                    sp.confidence AS confidence,
+                    sp.human_validated AS human_validated
                 FROM parcels p
                 LEFT JOIN survey_points sp ON sp.parcel_id = p.id
                 WHERE p.project_id = :project_id
@@ -265,12 +270,15 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                 "detected_crs": row.get("detected_crs") or "UNKNOWN_CRS",
                 "coordinates": [],
                 "confidences": [],
+                "human_validated": [],
             },
         )
         source_x = _coerce_source_coordinate(row.get("source_x"))
         source_y = _coerce_source_coordinate(row.get("source_y"))
         if source_x is not None and source_y is not None:
             parcel["coordinates"].append([source_x, source_y])
+            # Validation humaine par borne (indicateur séparé — jamais une confiance OCR).
+            parcel["human_validated"].append(bool(row.get("human_validated")))
         confidence = _coerce_confidence(row.get("confidence"))
         if confidence is not None:
             parcel["confidences"].append(confidence)
@@ -287,6 +295,10 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
             invalid_geometry = not geometry.valid
         average_confidence = sum(confidences) / len(confidences) if isinstance(confidences, list) and confidences else None
         point_count = len(coordinates) if isinstance(coordinates, list) else 0
+        hv_list = parcel["human_validated"] if isinstance(parcel["human_validated"], list) else []
+        parcel_human_validated = len(hv_list) > 0 and all(hv_list)
+        # IMPORTANT : la validation humaine N'est PAS passée à _compute_extraction_score —
+        # le score d'extraction reste fondé sur les preuves OCR réelles (confiance machine).
         score_result = _compute_extraction_score(
             point_count=point_count,
             declared_surface_m2=parcel["declared_surface_m2"],
@@ -299,6 +311,7 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                 label=str(parcel["label"]),
                 extraction_score=score_result.score,
                 extraction_score_status=score_result.status,
+                human_validated=parcel_human_validated,
                 declared_surface_m2=parcel["declared_surface_m2"],
                 calculated_surface_m2=calculated_surface_m2,
                 invalid_geometry=invalid_geometry,
@@ -435,6 +448,7 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
                 label=inputs.label,
                 extraction_score=inputs.extraction_score,
                 extraction_score_status=inputs.extraction_score_status,
+                human_validated=inputs.human_validated,
                 declared_surface_m2=inputs.declared_surface_m2,
                 calculated_surface_m2=inputs.calculated_surface_m2,
                 invalid_geometry=inputs.invalid_geometry,
@@ -466,6 +480,9 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
         project_extraction_score = min(computed_scores) if computed_scores else None
         project_extraction_status = SCORE_STATUS_COMPUTED
 
+    # Indicateur projet : toutes les bornes de toutes les parcelles validées humainement.
+    project_human_validated = len(parcel_results) > 0 and all(parcel.human_validated for parcel in parcel_results)
+
     state = transition_project_state(project_id, ProjectWorkflowState.AUDITED, db)
     return AuditResponse(
         project_id=project_id,
@@ -473,6 +490,7 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
         audit_id=str(uuid4()),
         extraction_score=project_extraction_score,
         extraction_score_status=project_extraction_status,
+        human_validated=project_human_validated,
         technical_score=min(parcel.technical_score for parcel in parcel_results),
         risk_level=_aggregate_risk_level(parcel_results),
         warnings=project_warnings,

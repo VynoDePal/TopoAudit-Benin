@@ -220,7 +220,10 @@ def store_extracted_parcels(
                 "point_index": point_index,
                 "source_x": point.x,
                 "source_y": point.y,
+                # Confiance OCR machine non fournie par le parser → None (jamais 0) ;
+                # validation humaine = False à l'extraction.
                 "confidence": None,
+                "human_validated": False,
                 "created_at": created_at,
             }
             if transformable:
@@ -235,8 +238,8 @@ def store_extracted_parcels(
                 text(
                     f"""
                     INSERT INTO survey_points
-                        (id, parcel_id, label, point_index, source_x, source_y, confidence, geom, created_at)
-                    VALUES (:id, :parcel_id, :label, :point_index, :source_x, :source_y, :confidence,
+                        (id, parcel_id, label, point_index, source_x, source_y, confidence, human_validated, geom, created_at)
+                    VALUES (:id, :parcel_id, :label, :point_index, :source_x, :source_y, :confidence, :human_validated,
                             {geom_sql}, :created_at)
                     """
                 ),

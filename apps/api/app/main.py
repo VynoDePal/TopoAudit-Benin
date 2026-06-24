@@ -70,6 +70,7 @@ async def lifespan(_app: "FastAPI"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE survey_points ALTER COLUMN geom DROP NOT NULL"))
             conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_id VARCHAR(36)"))
+            conn.execute(text("ALTER TABLE survey_points ADD COLUMN IF NOT EXISTS human_validated BOOLEAN NOT NULL DEFAULT FALSE"))
     # Log de démarrage : provider OCR + modèle actifs (le filtre anti-secret installé par
     # app.config garantit qu'aucune clé n'apparaît dans les logs).
     # logger "uvicorn.error" : visible dans la sortie de démarrage (le logger applicatif
@@ -251,6 +252,8 @@ class ParcelPointIO(BaseModel):
     x: float
     y: float
     confidence: float | None = None
+    # Validation humaine de la borne (distincte de la confiance OCR machine).
+    validated: bool = False
 
 
 class ParcelIO(BaseModel):
@@ -347,7 +350,9 @@ def replace_project_parcels(
         for index, point in enumerate(parcel.points):
             params = {
                 "id": str(uuid4()), "parcel_id": parcel_id, "label": point.label, "idx": index,
-                "sx": point.x, "sy": point.y, "conf": point.confidence, "created_at": now,
+                # confidence = confiance OCR machine (None si absente, jamais 0) ;
+                # human_validated = validation humaine (indicateur séparé, ≠ confiance).
+                "sx": point.x, "sy": point.y, "conf": point.confidence, "hv": bool(point.validated), "created_at": now,
             }
             if transformable:
                 longitude, latitude = transform_coordinate_to_wgs84(point.x, point.y, crs)
@@ -359,8 +364,8 @@ def replace_project_parcels(
                 text(
                     f"""
                     INSERT INTO survey_points
-                        (id, parcel_id, label, point_index, source_x, source_y, confidence, geom, created_at)
-                    VALUES (:id, :parcel_id, :label, :idx, :sx, :sy, :conf, {geom_sql}, :created_at)
+                        (id, parcel_id, label, point_index, source_x, source_y, confidence, human_validated, geom, created_at)
+                    VALUES (:id, :parcel_id, :label, :idx, :sx, :sy, :conf, :hv, {geom_sql}, :created_at)
                     """
                 ),
                 params,
@@ -477,7 +482,7 @@ def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> 
             label=parcel.label,
             declared_surface_m2=parcel.declared_surface_m2,
             point_count=len(parcel.points),
-            points=[OcrPoint(label=p.label, x=p.x, y=p.y) for p in parcel.points],
+            points=[OcrPoint(label=p.label, x=p.x, y=p.y, confidence=None) for p in parcel.points],
         )
         for parcel in parcels
     ]

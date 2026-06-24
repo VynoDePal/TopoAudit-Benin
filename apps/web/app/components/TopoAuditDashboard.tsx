@@ -8,6 +8,7 @@ import type { FeatureCollection, Polygon } from "geojson";
 import ParcelMap from "./ParcelMap";
 import { authHeaders, loadToken, saveToken, withAuth } from "../lib/authClient";
 import { extractionScoreText, isExtractionScoreNull } from "../lib/auditFormat";
+import { borneToApi, canConfirmParcel, confidenceLabel, editBorne } from "../lib/bornes";
 import { isTransformableCrs, toWgs84 } from "../lib/crsClient";
 import {
   confTone,
@@ -198,14 +199,14 @@ export default function TopoAuditDashboard() {
       declaredM2: p.declared_surface_m2 != null ? String(p.declared_surface_m2) : "",
       crs: p.detected_crs ?? "UNKNOWN_CRS",
       confirmed: false,
-      points: (p.points ?? []).map((pt: any) => ({ label: pt.label, x: String(pt.x), y: String(pt.y), confidence: pt.confidence ?? 0 })),
+      points: (p.points ?? []).map((pt: any) => ({ label: pt.label, x: String(pt.x), y: String(pt.y), confidence: pt.confidence ?? null, validated: pt.validated ?? false })),
     }));
   const mapToApi = (list: Parcel[]) =>
     list.map((p) => ({
       label: p.name,
       declared_surface_m2: Number.isFinite(num(p.declaredM2)) ? num(p.declaredM2) : null,
       detected_crs: p.crs,
-      points: p.points.map((pt) => ({ label: pt.label, x: num(pt.x), y: num(pt.y), confidence: pt.confidence })),
+      points: p.points.map((pt) => ({ label: pt.label, x: num(pt.x), y: num(pt.y), ...borneToApi(pt) })),
     }));
 
   // Statut CRS (EPSG_32631…) → libellé EPSG transformable, ou statut tel quel (LOCAL_ONLY…).
@@ -316,7 +317,14 @@ export default function TopoAuditDashboard() {
   const updatePoint = (pIdx: number, rIdx: number, field: keyof Parcel["points"][number], val: string) =>
     setParcels((prev) =>
       prev.map((p, i) =>
-        i !== pIdx ? p : { ...p, confirmed: false, points: p.points.map((pt, j) => (j === rIdx ? { ...pt, [field]: val } : pt)) },
+        i !== pIdx
+          ? p
+          : {
+              ...p,
+              confirmed: false,
+              // Modifier label/x/y invalide la validation humaine de CETTE borne.
+              points: p.points.map((pt, j) => (j === rIdx ? editBorne(pt, field as "label" | "x" | "y", val) : pt)),
+            },
       ),
     );
   const addPoint = (pIdx: number) =>
@@ -325,7 +333,7 @@ export default function TopoAuditDashboard() {
         if (i !== pIdx) return p;
         const n = p.points.length + 1;
         const pre = p.points[0] ? p.points[0].label.replace(/[0-9]/g, "") : "B";
-        return { ...p, confirmed: false, points: [...p.points, { label: pre + n, x: "", y: "", confidence: 0 }] };
+        return { ...p, confirmed: false, points: [...p.points, { label: pre + n, x: "", y: "", confidence: null, validated: false }] };
       }),
     );
   const removePoint = (pIdx: number, rIdx: number) =>
@@ -336,6 +344,15 @@ export default function TopoAuditDashboard() {
     setParcels((prev) => prev.map((p, i) => (i === pIdx ? { ...p, [field]: val, confirmed: false } : p)));
   const confirmParcel = (pIdx: number) =>
     setParcels((prev) => prev.map((p, i) => (i === pIdx ? { ...p, confirmed: !p.confirmed } : p)));
+  // Validation humaine d'une borne (case « Validé »). N'affecte JAMAIS la confiance OCR.
+  const toggleValidated = (pIdx: number, rIdx: number) =>
+    setParcels((prev) =>
+      prev.map((p, i) =>
+        i !== pIdx
+          ? p
+          : { ...p, confirmed: false, points: p.points.map((pt, j) => (j === rIdx ? { ...pt, validated: !(pt.validated === true) } : pt)) },
+      ),
+    );
 
   // ---- derived (équivalent renderVals) ----
   const view = useMemo(() => {
@@ -391,8 +408,19 @@ export default function TopoAuditDashboard() {
     const apDelta = deltaInfo(num(ap.declaredM2), ag.area);
     const deltaColorMap: Record<string, string> = { low: t.low, mod: t.mod, high: t.high, none: t.sub };
     const rows = ap.points.map((pt, j) => {
-      const tone = confTone(t, pt.confidence);
-      return { idx: j, label: pt.label, x: pt.x, y: pt.y, confPct: `${Math.round(pt.confidence * 100)}%`, confBg: tone.bg, confFg: tone.fg };
+      // confidence === null → « À valider » (style neutre) ; un vrai nombre (y compris 0) → « X% ».
+      const hasConf = typeof pt.confidence === "number";
+      const tone = hasConf ? confTone(t, pt.confidence as number) : { bg: t.panel2, fg: t.sub };
+      return {
+        idx: j,
+        label: pt.label,
+        x: pt.x,
+        y: pt.y,
+        confPct: confidenceLabel(pt.confidence, lang),
+        confBg: tone.bg,
+        confFg: tone.fg,
+        validated: pt.validated === true,
+      };
     });
     const liveMetrics = [
       { label: s.live_valid, value: ag.valid ? "✓" : "—", color: ag.valid ? t.low : t.faint },
@@ -400,11 +428,23 @@ export default function TopoAuditDashboard() {
       { label: s.live_per, value: ag.perimeter === null ? "—" : `${fmt(ag.perimeter, 1)} m`, color: t.ink },
       { label: s.live_delta, value: apDelta.pct === null ? "—" : `${apDelta.pct > 0 ? "+" : ""}${fmt(apDelta.pct, 1)}%`, color: deltaColorMap[apDelta.band] },
     ];
+    // Confiances NUMÉRIQUES uniquement (jamais les null) + état de validation humaine.
+    const numericConf = ap.points.map((pt) => pt.confidence).filter((c): c is number => typeof c === "number");
+    const allBornesValidated = ap.points.length >= 3 && ap.points.every((pt) => pt.validated === true);
+    const canConfirm = canConfirmParcel(ap.points);
+
     const apWarnings: string[] = [];
     if (ap.crs === "EPSG:4326") apWarnings.push(lang === "fr" ? "Vérifiez l’ordre [longitude, latitude] : risque d’inversion X/Y." : "Check [longitude, latitude] order: possible X/Y swap.");
     if (apDelta.band === "high") apWarnings.push(lang === "fr" ? "Écart surface supérieur à 5 % entre la valeur déclarée et calculée." : "Area deviation above 5% between declared and calculated value.");
-    const avgConf = ap.points.reduce((a, b) => a + b.confidence, 0) / ap.points.length;
-    if (avgConf < 0.8) apWarnings.push(lang === "fr" ? "Confiance OCR moyenne faible sur cette parcelle — contrôlez chaque borne." : "Low average OCR confidence on this parcel — check each corner.");
+    if (numericConf.length === 0) {
+      apWarnings.push(
+        allBornesValidated
+          ? (lang === "fr" ? "Bornes validées humainement. La confiance OCR reste non fournie." : "Corners validated by a human. OCR confidence is still not provided.")
+          : (lang === "fr" ? "Confiance OCR par borne non fournie — validation humaine requise." : "Per-corner OCR confidence not provided — human validation required."),
+      );
+    } else if (numericConf.reduce((a, b) => a + b, 0) / numericConf.length < 0.8) {
+      apWarnings.push(lang === "fr" ? "Confiance OCR moyenne faible sur cette parcelle — contrôlez chaque borne." : "Low average OCR confidence on this parcel — check each corner.");
+    }
 
     const allConfirmed = parcels.every((p) => p.confirmed);
     let statusMsg = s.st_correct;
@@ -420,6 +460,11 @@ export default function TopoAuditDashboard() {
       liveMetrics,
       warnings: apWarnings,
       hasWarnings: apWarnings.length > 0,
+      canConfirm,
+      confirmHint: canConfirm
+        ? (lang === "fr" ? "Toutes les bornes sont validées." : "All corners are validated.")
+        : (lang === "fr" ? "Validez chaque borne avant de confirmer la parcelle." : "Validate each corner before confirming the parcel."),
+      confirmed: ap.confirmed,
       confirmLabel: ap.confirmed ? s.confirmed : s.confirm,
       confirmBg: ap.confirmed ? t.lowSoft : t.panel,
       confirmFg: ap.confirmed ? t.low : t.ink,
@@ -448,7 +493,7 @@ export default function TopoAuditDashboard() {
         band,
       };
     });
-    const allConf = parcels.flatMap((p) => p.points.map((pt) => pt.confidence));
+    const allConf = parcels.flatMap((p) => p.points.map((pt) => pt.confidence)).filter((c): c is number => typeof c === "number");
     const ocrScore = Math.round(Math.min(1, allConf.reduce((a, b) => a + b, 0) / Math.max(allConf.length, 1) + 0.04) * 100);
     let tech = 100;
     geoms.forEach((g) => {
@@ -775,8 +820,8 @@ export default function TopoAuditDashboard() {
                       <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                           <tr style={{ background: t.panel2 }}>
-                            {[s.c_borne, s.c_x, s.c_y, s.c_conf, ""].map((h, i) => (
-                              <th key={i} style={{ textAlign: i === 3 ? "center" : "left", padding: "10px 14px", fontSize: 10.5, fontWeight: 600, letterSpacing: ".08em", textTransform: "uppercase", color: t.faint, width: i === 0 ? 74 : i === 3 ? 96 : i === 4 ? 42 : undefined }}>{h}</th>
+                            {[s.c_borne, s.c_x, s.c_y, s.c_conf, s.c_validated, ""].map((h, i) => (
+                              <th key={i} style={{ textAlign: i === 3 || i === 4 ? "center" : "left", padding: "10px 14px", fontSize: 10.5, fontWeight: 600, letterSpacing: ".08em", textTransform: "uppercase", color: t.faint, width: i === 0 ? 74 : i === 3 ? 96 : i === 4 ? 70 : i === 5 ? 42 : undefined }}>{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -787,6 +832,7 @@ export default function TopoAuditDashboard() {
                               <td style={{ padding: "6px 10px" }}><input className="ta-cell" value={r.x} onChange={(e) => updatePoint(activeIdx, r.idx, "x", e.target.value)} inputMode="decimal" style={{ width: "100%", border: "1px solid transparent", background: "transparent", borderRadius: 6, padding: "6px 7px", fontSize: 13, fontFamily: MONO, color: t.ink }} /></td>
                               <td style={{ padding: "6px 10px" }}><input className="ta-cell" value={r.y} onChange={(e) => updatePoint(activeIdx, r.idx, "y", e.target.value)} inputMode="decimal" style={{ width: "100%", border: "1px solid transparent", background: "transparent", borderRadius: 6, padding: "6px 7px", fontSize: 13, fontFamily: MONO, color: t.ink }} /></td>
                               <td style={{ padding: "6px 10px", textAlign: "center" }}><span style={{ display: "inline-block", fontSize: 11, fontWeight: 600, fontFamily: MONO, padding: "3px 8px", borderRadius: 20, background: r.confBg, color: r.confFg }}>{r.confPct}</span></td>
+                              <td style={{ padding: "6px 10px", textAlign: "center" }}><label style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer", fontSize: 11.5, color: r.validated ? t.low : t.sub }}><input type="checkbox" checked={r.validated} onChange={() => toggleValidated(activeIdx, r.idx)} style={{ accentColor: t.accent, cursor: "pointer" }} aria-label={s.c_validated} />{r.validated ? "✓" : ""}</label></td>
                               <td style={{ padding: "6px 10px", textAlign: "center" }}><button onClick={() => removePoint(activeIdx, r.idx)} title={s.remove} style={{ width: 26, height: 26, border: `1px solid ${t.line}`, background: "transparent", borderRadius: 7, cursor: "pointer", color: t.faint, display: "inline-flex", alignItems: "center", justifyContent: "center" }}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></button></td>
                             </tr>
                           ))}
@@ -819,7 +865,8 @@ export default function TopoAuditDashboard() {
                     )}
                     <div style={{ display: "flex", gap: 11, justifyContent: "flex-end", alignItems: "center" }}>
                       <span style={{ fontSize: 12, color: errorMsg ? t.high : t.sub, marginRight: "auto" }}>{errorMsg || view.statusMsg}</span>
-                      <button onClick={() => confirmParcel(activeIdx)} style={{ border: `1px solid ${view.active.confirmBorder}`, background: view.active.confirmBg, color: view.active.confirmFg, borderRadius: 10, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: "pointer" }}>{view.active.confirmLabel}</button>
+                      <span style={{ fontSize: 11.5, color: view.active.canConfirm ? t.low : t.mod }}>{view.active.confirmHint}</span>
+                      <button onClick={() => confirmParcel(activeIdx)} disabled={!view.active.confirmed && !view.active.canConfirm} style={{ border: `1px solid ${view.active.confirmBorder}`, background: view.active.confirmBg, color: view.active.confirmFg, borderRadius: 10, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: !view.active.confirmed && !view.active.canConfirm ? "not-allowed" : "pointer", opacity: !view.active.confirmed && !view.active.canConfirm ? 0.55 : 1 }}>{view.active.confirmLabel}</button>
                       <button onClick={() => runAudit(view.allConfirmed)} disabled={!view.allConfirmed || busy === "audit"} style={{ display: "inline-flex", alignItems: "center", gap: 8, border: "none", background: view.allConfirmed ? t.accent : t.panel2, color: view.allConfirmed ? t.accentInk : t.faint, borderRadius: 10, padding: "11px 18px", fontSize: 13.5, fontWeight: 600, cursor: view.allConfirmed ? (busy === "audit" ? "wait" : "pointer") : "not-allowed", opacity: view.allConfirmed ? (busy === "audit" ? 0.7 : 1) : 0.6 }}>{busy === "audit" ? (lang === "fr" ? "Audit…" : "Auditing…") : s.btn_audit}{busy === "audit" ? null : arrow}</button>
                     </div>
                   </section>

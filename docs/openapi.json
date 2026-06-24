@@ -25,6 +25,11 @@
             "title": "Extraction Score Status",
             "type": "string"
           },
+          "human_validated": {
+            "default": false,
+            "title": "Human Validated",
+            "type": "boolean"
+          },
           "parcels": {
             "items": {
               "$ref": "#/components/schemas/ParcelAuditResult"
@@ -319,6 +324,17 @@
       },
       "OcrPoint": {
         "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "label": {
             "title": "Label",
             "type": "string"
@@ -482,6 +498,11 @@
             "title": "Extraction Score Status",
             "type": "string"
           },
+          "human_validated": {
+            "default": false,
+            "title": "Human Validated",
+            "type": "boolean"
+          },
           "invalid_geometry": {
             "default": false,
             "title": "Invalid Geometry",
@@ -592,6 +613,11 @@
           "label": {
             "title": "Label",
             "type": "string"
+          },
+          "validated": {
+            "default": false,
+            "title": "Validated",
+            "type": "boolean"
           },
           "x": {
             "title": "X",

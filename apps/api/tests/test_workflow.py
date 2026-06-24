@@ -278,6 +278,36 @@ def test_audit_computes_extraction_score_from_extracted_data_quality():
     assert payload["parcels"][0]["extraction_score"] == 85
 
 
+def test_human_validation_is_separate_and_never_becomes_extraction_score():
+    # Bornes validées humainement MAIS aucune confiance OCR machine (None).
+    parcel_rows = [
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "declared_surface_m2": 176,
+            "detected_crs": "EPSG:32631",
+            "source_x": x,
+            "source_y": y,
+            "confidence": None,
+            "human_validated": True,
+        }
+        for x, y in [(403825.84, 707630.38), (403836.57, 707626.36), (403840.12, 707641.10), (403829.20, 707645.42)]
+    ]
+    session = FakeWorkflowSession(status="VALIDATED", parcel_rows=parcel_rows)
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
+    payload = client.post("/api/projects/project-1/audit").json()
+    # La validation humaine ne devient JAMAIS le score d'extraction : sans confiance OCR
+    # réelle, le score reste « à valider ».
+    assert payload["extraction_score"] is None
+    assert payload["extraction_score_status"] == "needs_human_validation"
+    assert payload["parcels"][0]["extraction_score"] is None
+    # Indicateur SÉPARÉ de validation humaine.
+    assert payload["human_validated"] is True
+    assert payload["parcels"][0]["human_validated"] is True
+
+
 def test_audit_marks_parcel_without_enough_points_as_invalid_geometry():
     parcel_rows = [
         {
@@ -313,6 +343,7 @@ def test_audit_marks_parcel_without_enough_points_as_invalid_geometry():
             "label": "Parcelle A",
             "extraction_score": None,
             "extraction_score_status": "needs_human_validation",
+            "human_validated": False,
             "declared_surface_m2": 176.0,
             "calculated_surface_m2": None,
             "invalid_geometry": True,

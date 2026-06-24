@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, event, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, event, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 try:
@@ -135,7 +135,11 @@ class SurveyPoint(Base):
     point_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     source_x: Mapped[float | None]
     source_y: Mapped[float | None]
+    # Confiance OCR machine (None si non fournie — jamais 0 par défaut).
     confidence: Mapped[float | None] = mapped_column(Float)
+    # Validation HUMAINE de la borne — indicateur SÉPARÉ de la confiance OCR ; n'est
+    # jamais utilisé comme confiance ni pour calculer extraction_score.
+    human_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # Nullable : un point dont le CRS n'est PAS géoréférencé (LOCAL_ONLY/UNKNOWN/
     # NEEDS_GEOREFERENCING) n'a pas de géométrie WGS84 — on conserve source_x/source_y.
     geom: Mapped[Any | None] = mapped_column(_geometry_column("POINT"), nullable=True)

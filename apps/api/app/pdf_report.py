@@ -46,6 +46,7 @@ def _parcel_card(parcel: ParcelAuditResult, index: int) -> str:
                     <tr><th>Surface déclarée</th><td>{escape(_format_surface(parcel.declared_surface_m2))}</td></tr>
                     <tr><th>Surface calculée</th><td>{escape(_format_surface(parcel.calculated_surface_m2))}</td></tr>
                     <tr><th>Score d'extraction</th><td>{escape(_format_extraction_score(parcel.extraction_score, parcel.extraction_score_status))}</td></tr>
+                    <tr><th>Bornes validées humainement</th><td>{"Oui" if parcel.human_validated else "Non"}</td></tr>
                     <tr><th>Score technique</th><td>{parcel.technical_score}/100</td></tr>
                     <tr><th>Niveau de risque</th><td>{escape(_risk_label(parcel.risk_level))}</td></tr>
                     <tr><th>Géométrie</th><td>{geometry_status}</td></tr>
@@ -96,6 +97,7 @@ def generate_audit_report_pdf(audit: AuditResponse) -> bytes:
                 <tr><th>Audit</th><td>{escape(audit.audit_id)}</td></tr>
                 <tr><th>État du workflow</th><td>{escape(audit.state.value)}</td></tr>
                 <tr><th>Score d'extraction</th><td>{escape(_format_extraction_score(audit.extraction_score, audit.extraction_score_status))}</td></tr>
+                <tr><th>Bornes validées humainement</th><td>{"Oui" if audit.human_validated else "Non"}</td></tr>
                 <tr><th>Score technique</th><td>{audit.technical_score}/100</td></tr>
                 <tr><th>Niveau de risque</th><td>{escape(_risk_label(audit.risk_level))}</td></tr>
             </tbody>
