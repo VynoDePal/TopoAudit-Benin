@@ -9,6 +9,7 @@ import ParcelMap from "./ParcelMap";
 import { authHeaders, loadToken, saveToken, withAuth } from "../lib/authClient";
 import { extractionScoreText, isExtractionScoreNull } from "../lib/auditFormat";
 import { borneToApi, canConfirmParcel, confidenceLabel, editBorne } from "../lib/bornes";
+import { DEFAULT_OCR_PROVIDER, OCR_PROVIDERS, ocrProviderLabel, ocrRequestPath } from "../lib/ocrProviders";
 import { isTransformableCrs, toWgs84 } from "../lib/crsClient";
 import {
   confTone,
@@ -136,7 +137,8 @@ export default function TopoAuditDashboard() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [auditResult, setAuditResult] = useState<AuditApiResponse | null>(null);
   // Métadonnées OCR (P0.3) : provider réel vs mock + CRS détecté, pour affichage explicite.
-  const [ocrInfo, setOcrInfo] = useState<{ isMock: boolean; provider: string; crs: string; scoreStatus: string } | null>(null);
+  const [ocrProvider, setOcrProvider] = useState<string>(DEFAULT_OCR_PROVIDER);
+  const [ocrInfo, setOcrInfo] = useState<{ isMock: boolean; configured: string; provider: string; model: string | null; crs: string; scoreStatus: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const t = THEMES[themeKey];
@@ -252,8 +254,16 @@ export default function TopoAuditDashboard() {
       if (!up.ok) throw new Error((await up.text().catch(() => "")) || `Upload → ${up.status}`);
       const upDoc = await up.json();
       // P0.3 : l'OCR est une étape EXPLICITE (l'upload ne fait que stocker le fichier).
-      const ocr = await apiJson("POST", `/projects/${proj.id}/documents/${upDoc.id}/ocr`);
-      setOcrInfo({ isMock: !!ocr.is_mock_result, provider: ocr.actual_provider ?? "?", crs: ocr.detected_crs ?? "UNKNOWN_CRS", scoreStatus: ocr.extraction_score_status ?? "needs_human_validation" });
+      // Le moteur OCR choisi à l'import est envoyé en query param.
+      const ocr = await apiJson("POST", ocrRequestPath(proj.id, upDoc.id, ocrProvider));
+      setOcrInfo({
+        isMock: !!ocr.is_mock_result,
+        configured: ocr.configured_provider ?? ocrProvider,
+        provider: ocr.actual_provider ?? "?",
+        model: ocr.provider_model ?? null,
+        crs: ocr.detected_crs ?? "UNKNOWN_CRS",
+        scoreStatus: ocr.extraction_score_status ?? "needs_human_validation",
+      });
       const crsForParcels = crsStatusToDisplay(ocr.detected_crs);
       const mapped = mapFromApi((ocr.parsed_parcels ?? []).map((p: any) => ({ ...p, detected_crs: crsForParcels })));
       if (mapped.length) {
@@ -701,6 +711,13 @@ export default function TopoAuditDashboard() {
                       <label style={labelStyle}>{s.f_notes}
                         <input value={notes} onChange={(e) => setNotes(e.target.value)} style={inputStyle} />
                       </label>
+                      <label style={labelStyle}>{s.ocr_engine}
+                        <select aria-label={s.ocr_engine} value={ocrProvider} onChange={(e) => setOcrProvider(e.target.value)} style={{ ...inputStyle, background: t.panel, fontSize: 13 }}>
+                          {OCR_PROVIDERS.map((p) => (
+                            <option key={p.id} value={p.id}>{ocrProviderLabel(p.id, lang)}</option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
                   </section>
                   <section style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -748,8 +765,10 @@ export default function TopoAuditDashboard() {
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, background: ocrInfo.isMock ? "#fef3c7" : "#dcfce7", color: ocrInfo.isMock ? "#92400e" : "#166534", border: `1px solid ${ocrInfo.isMock ? "#f59e0b" : "#22c55e"}` }}>
                         {ocrInfo.isMock ? (lang === "fr" ? "⚠ Mock OCR (démo)" : "⚠ Mock OCR (demo)") : (lang === "fr" ? "✓ OCR réel" : "✓ Real OCR")}
-                        {` · ${ocrInfo.provider}`}
+                        {` · ${ocrProviderLabel(ocrInfo.provider, lang)}`}
                       </span>
+                      <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>{lang === "fr" ? "Demandé" : "Requested"} : {ocrProviderLabel(ocrInfo.configured, lang)}</span>
+                      {ocrInfo.model && <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>{lang === "fr" ? "Modèle" : "Model"} : {ocrInfo.model}</span>}
                       <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>CRS : {ocrInfo.crs}</span>
                       <span style={{ fontSize: 12.5, color: t.sub, fontFamily: MONO }}>{lang === "fr" ? "Statut extraction" : "Extraction status"} : {ocrInfo.scoreStatus}</span>
                     </div>

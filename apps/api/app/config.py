@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_api_endpoint: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_model: str = "gemma-4-31b-it"
+    # Mistral OCR 4 (provider OCR sélectionnable). La clé n'est JAMAIS loggée
+    # (ajoutée à la redaction ci-dessous). confidence_granularity ∈ {none, word, page}.
+    mistral_api_key: str = ""
+    mistral_api_endpoint: str = "https://api.mistral.ai/v1"
+    mistral_ocr_model: str = "mistral-ocr-latest"
+    mistral_include_blocks: bool = True
+    mistral_confidence_granularity: str = "word"
     ocr_rate_limit_per_minute: int = 10
     # Sécurité (P1.1) : secret JWT + mode démo sans auth (jamais en production).
     jwt_secret: str = "dev-insecure-change-me"
@@ -38,6 +45,7 @@ class Settings(BaseSettings):
             [
                 self.azure_document_intelligence_key,
                 self.gemini_api_key,
+                self.mistral_api_key,
                 self.jwt_secret,
             ]
         )

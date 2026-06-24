@@ -33,9 +33,11 @@ from app.models import Base, Project
 from app.ocr import (
     OcrParsedParcel,
     OcrPoint,
+    OcrProviderInfo,
     OcrResult,
     enforce_ocr_rate_limit,
-    extract_text_from_document,
+    extract_ocr_from_document,
+    list_ocr_providers,
 )
 from app.pdf_report import generate_audit_report_pdf
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
@@ -135,6 +137,8 @@ class SurfaceRiskRequest(BaseModel):
 class OcrRequest(BaseModel):
     project_id: str = Field(min_length=1)
     document_id: str = Field(min_length=1)
+    # Choix optionnel du provider OCR (gemini | mistral | mock | azure). Absent → settings.ocr_provider.
+    provider: str | None = Field(default=None, examples=["mistral"])
 
 
 def _database_ready() -> bool:
@@ -444,7 +448,9 @@ def download_project_audit_report(
     return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
-def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> OcrResult:
+def _run_scoped_document_ocr(
+    project_id: str, document_id: str, db: Session, provider_name: str | None = None
+) -> OcrResult:
     project = (
         db.execute(text("SELECT id FROM projects WHERE id = :project_id"), {"project_id": project_id})
         .mappings()
@@ -467,13 +473,18 @@ def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> 
     if document["project_id"] != project_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Document does not belong to project")
 
-    text_content, provider = extract_text_from_document(document["storage_path"], document["content_type"])
+    ocr = extract_ocr_from_document(document["storage_path"], document["content_type"], provider_name)
+    text_content = ocr.text
+    provider = ocr.provider
     # P0.3 : c'est ICI (et non à l'upload) que l'OCR parse et persiste les parcelles.
+    # Les confiances OCR machine par mot (Mistral) sont transmises pour calculer la
+    # confiance par borne (jamais inventée).
     parcels, detection = store_extracted_parcels(
         project_id=project_id,
         document_id=document["id"],
         ocr_text=text_content,
         db=db,
+        word_confidences=ocr.word_confidences,
     )
     mark_project_ocr_extracted(project_id, db)
 
@@ -482,26 +493,31 @@ def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> 
             label=parcel.label,
             declared_surface_m2=parcel.declared_surface_m2,
             point_count=len(parcel.points),
-            points=[OcrPoint(label=p.label, x=p.x, y=p.y, confidence=None) for p in parcel.points],
+            points=[OcrPoint(label=p.label, x=p.x, y=p.y, confidence=p.confidence) for p in parcel.points],
         )
         for parcel in parcels
     ]
-    # Statut du score d'extraction au stade OCR : sans confiance OCR ni validation
-    # humaine, on signale needs_human_validation (jamais de score inventé).
+    # Confiance OCR moyenne (numérique uniquement, jamais les None) : si le provider en
+    # fournit (Mistral), le score d'extraction peut être calculé ; sinon il reste
+    # needs_human_validation (jamais inventé). human_validated reste séparé.
+    confidences = [pt.confidence for parcel in parsed_parcels for pt in parcel.points if pt.confidence is not None]
+    average_point_confidence = sum(confidences) / len(confidences) if confidences else None
     total_points = sum(parcel.point_count for parcel in parsed_parcels)
     score_status = extraction_score_calculator.calculate(
         point_count=total_points,
         declared_surface_m2=next((p.declared_surface_m2 for p in parsed_parcels), None),
         detected_crs=detection.epsg,
-        average_point_confidence=None,
+        average_point_confidence=average_point_confidence,
     ).status
 
-    configured = str(settings.ocr_provider).strip().lower()
+    # Provider configuré (demandé) vs réel (mock après fallback local) — traçabilité.
+    configured = (provider_name or settings.ocr_provider).strip().lower()
     return OcrResult(
         provider=provider,
         configured_provider=configured,
         actual_provider=provider,
         is_mock_result=(provider == "mock"),
+        provider_model=ocr.model,
         extracted_text=text_content,
         parsed_parcels=parsed_parcels,
         detected_crs=detection.status.value,
@@ -511,16 +527,23 @@ def _run_scoped_document_ocr(project_id: str, document_id: str, db: Session) -> 
     )
 
 
+@app.get("/api/ocr/providers", response_model=list[OcrProviderInfo], tags=["ocr"])
+def get_ocr_providers() -> list[OcrProviderInfo]:
+    """Providers OCR sélectionnables + leur état (jamais de clé API)."""
+    return list_ocr_providers()
+
+
 @app.post("/api/projects/{project_id}/documents/{document_id}/ocr", response_model=OcrResult, tags=["ocr"])
 def run_document_ocr(
     project_id: str,
     document_id: str,
     request: Request,
+    provider: str | None = None,
     db: Session = Depends(get_db),
     _user: AuthUser | None = Depends(authorized_project_user),
 ) -> OcrResult:
     enforce_ocr_rate_limit(request)
-    return _run_scoped_document_ocr(project_id, document_id, db)
+    return _run_scoped_document_ocr(project_id, document_id, db, provider_name=provider)
 
 
 @app.post("/api/ocr", response_model=OcrResult, tags=["ocr"])
@@ -543,7 +566,7 @@ def run_document_ocr_from_body(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     ensure_project_access(row.get("owner_id"), current_user)
-    return _run_scoped_document_ocr(payload.project_id, payload.document_id, db)
+    return _run_scoped_document_ocr(payload.project_id, payload.document_id, db, provider_name=payload.provider)
 
 
 @app.post("/api/risk/score-surface", response_model=SurfaceRiskScore, tags=["risk"])

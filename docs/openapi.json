@@ -356,6 +356,46 @@
         "title": "OcrPoint",
         "type": "object"
       },
+      "OcrProviderInfo": {
+        "properties": {
+          "configured": {
+            "examples": [
+              true
+            ],
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "id": {
+            "examples": [
+              "mistral"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "examples": [
+              "Mistral OCR 4"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "supports_word_confidence": {
+            "examples": [
+              true
+            ],
+            "title": "Supports Word Confidence",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "configured",
+          "supports_word_confidence"
+        ],
+        "title": "OcrProviderInfo",
+        "type": "object"
+      },
       "OcrRequest": {
         "properties": {
           "document_id": {
@@ -367,6 +407,20 @@
             "minLength": 1,
             "title": "Project Id",
             "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "mistral"
+            ],
+            "title": "Provider"
           }
         },
         "required": [
@@ -439,6 +493,20 @@
             ],
             "title": "Provider",
             "type": "string"
+          },
+          "provider_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "mistral-ocr-latest"
+            ],
+            "title": "Provider Model"
           }
         },
         "required": [
@@ -1326,6 +1394,32 @@
         ]
       }
     },
+    "/api/ocr/providers": {
+      "get": {
+        "description": "Providers OCR sélectionnables + leur état (jamais de clé API).",
+        "operationId": "get_ocr_providers_api_ocr_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OcrProviderInfo"
+                  },
+                  "title": "Response Get Ocr Providers Api Ocr Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ocr Providers",
+        "tags": [
+          "ocr"
+        ]
+      }
+    },
     "/api/projects": {
       "post": {
         "operationId": "create_project_api_projects_post",
@@ -1519,6 +1613,22 @@
             "schema": {
               "title": "Document Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
             }
           }
         ],

@@ -40,6 +40,29 @@ class OcrParsedParcel(BaseModel):
     points: list[OcrPoint] = Field(default_factory=list)
 
 
+class OcrProviderResult(BaseModel):
+    """Résultat interne d'un provider OCR (texte + traçabilité + confiances éventuelles).
+
+    ``word_confidences`` : confiances OCR MACHINE par mot (ex. Mistral), liste de
+    ``{"text": str, "confidence": float}`` — JAMAIS la validation humaine. None si le
+    provider n'en fournit pas (Gemini/Gemma, mock).
+    """
+
+    text: str
+    provider: str
+    model: str | None = None
+    raw_response: dict | None = None
+    page_confidence: float | None = None
+    word_confidences: list[dict] | None = None
+
+
+class OcrProviderInfo(BaseModel):
+    id: str = Field(examples=["mistral"])
+    label: str = Field(examples=["Mistral OCR 4"])
+    configured: bool = Field(examples=[True])
+    supports_word_confidence: bool = Field(examples=[True])
+
+
 class OcrResult(BaseModel):
     provider: str = Field(examples=["mock"])
     # Traçabilité du provider : configuré (demandé) vs réel (après fallback éventuel),
@@ -47,6 +70,8 @@ class OcrResult(BaseModel):
     configured_provider: str = Field(examples=["gemini"])
     actual_provider: str = Field(examples=["mock"])
     is_mock_result: bool = Field(default=False, examples=[True])
+    # Modèle réellement utilisé par le provider (None pour le mock).
+    provider_model: str | None = Field(default=None, examples=["mistral-ocr-latest"])
     extracted_text: str
     parsed_parcels: list[OcrParsedParcel] = Field(default_factory=list)
     # Statut CRS détecté (EPSG_32631, EPSG_4326, LOCAL_ONLY, UNKNOWN_CRS, NEEDS_GEOREFERENCING).
@@ -111,8 +136,20 @@ def _gemini_generate_url() -> str:
     return f"{endpoint}/models/{model}:generateContent"
 
 
+def _mistral_is_configured() -> bool:
+    return bool(settings.mistral_api_key)
+
+
+def _mistral_ocr_url() -> str:
+    return f"{settings.mistral_api_endpoint.rstrip('/')}/ocr"
+
+
 class OcrProvider(Protocol):
     name: str
+
+    @property
+    def model(self) -> str | None:
+        ...
 
     def is_configured(self) -> bool:
         ...
@@ -120,9 +157,13 @@ class OcrProvider(Protocol):
     def extract_text(self, storage_path: str, content_type: str | None) -> str:
         ...
 
+    def extract(self, storage_path: str, content_type: str | None) -> OcrProviderResult:
+        ...
+
 
 class MockOcrProvider:
     name = "mock"
+    model: str | None = None
 
     def is_configured(self) -> bool:
         return True
@@ -130,9 +171,16 @@ class MockOcrProvider:
     def extract_text(self, storage_path: str, content_type: str | None) -> str:
         return MOCK_OCR_TEXT
 
+    def extract(self, storage_path: str, content_type: str | None) -> OcrProviderResult:
+        return OcrProviderResult(text=MOCK_OCR_TEXT, provider=self.name, model=self.model)
+
 
 class AzureOcrProvider:
     name = "azure"
+
+    @property
+    def model(self) -> str | None:
+        return settings.azure_document_intelligence_model_id
 
     def is_configured(self) -> bool:
         return _azure_is_configured()
@@ -140,9 +188,18 @@ class AzureOcrProvider:
     def extract_text(self, storage_path: str, content_type: str | None) -> str:
         return _extract_text_with_azure(storage_path, content_type)
 
+    def extract(self, storage_path: str, content_type: str | None) -> OcrProviderResult:
+        return OcrProviderResult(
+            text=self.extract_text(storage_path, content_type), provider=self.name, model=self.model
+        )
+
 
 class GeminiOcrProvider:
     name = "gemini"
+
+    @property
+    def model(self) -> str | None:
+        return settings.gemini_model
 
     def is_configured(self) -> bool:
         return _gemini_is_configured()
@@ -150,12 +207,64 @@ class GeminiOcrProvider:
     def extract_text(self, storage_path: str, content_type: str | None) -> str:
         return _extract_text_with_gemini(storage_path, content_type)
 
+    def extract(self, storage_path: str, content_type: str | None) -> OcrProviderResult:
+        # Gemini/Gemma ne fournit pas de confiance par mot exploitable → word_confidences=None
+        # (la confiance par borne restera donc null côté parser : jamais inventée).
+        return OcrProviderResult(
+            text=self.extract_text(storage_path, content_type), provider=self.name, model=self.model
+        )
+
+
+class MistralOcrProvider:
+    name = "mistral"
+
+    @property
+    def model(self) -> str | None:
+        return settings.mistral_ocr_model
+
+    def is_configured(self) -> bool:
+        return _mistral_is_configured()
+
+    def extract(self, storage_path: str, content_type: str | None) -> OcrProviderResult:
+        return _extract_with_mistral(storage_path, content_type)
+
+    def extract_text(self, storage_path: str, content_type: str | None) -> str:
+        return self.extract(storage_path, content_type).text
+
 
 OCR_PROVIDER_FACTORIES = {
     "mock": MockOcrProvider,
     "azure": AzureOcrProvider,
     "gemini": GeminiOcrProvider,
+    "mistral": MistralOcrProvider,
 }
+
+# Métadonnées exposées par GET /api/ocr/providers (jamais les clés API). Azure reste
+# utilisable via ?provider=azure mais n'est pas listé dans l'UI (legacy).
+_PUBLIC_PROVIDERS: tuple[str, ...] = ("gemini", "mistral", "mock")
+_PROVIDER_LABELS = {
+    "gemini": "Gemma 4 / Gemini",
+    "mistral": "Mistral OCR 4",
+    "mock": "Mock OCR",
+    "azure": "Azure Document Intelligence",
+}
+_PROVIDER_SUPPORTS_WORD_CONFIDENCE = {"gemini": False, "mistral": True, "mock": False, "azure": False}
+
+
+def list_ocr_providers() -> list[OcrProviderInfo]:
+    """Liste des providers OCR sélectionnables + leur état (sans jamais exposer de clé)."""
+    providers: list[OcrProviderInfo] = []
+    for provider_id in _PUBLIC_PROVIDERS:
+        factory = OCR_PROVIDER_FACTORIES[provider_id]
+        providers.append(
+            OcrProviderInfo(
+                id=provider_id,
+                label=_PROVIDER_LABELS[provider_id],
+                configured=factory().is_configured(),
+                supports_word_confidence=_PROVIDER_SUPPORTS_WORD_CONFIDENCE[provider_id],
+            )
+        )
+    return providers
 
 
 def _allows_unconfigured_ocr_fallback() -> bool:
@@ -171,6 +280,8 @@ def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
     provider = provider_factory()
     if provider.is_configured():
         return provider
+    # Clé absente : en local on retombe sur le mock (démo) ; en staging/production on
+    # refuse (jamais de fallback silencieux). actual_provider="mock" tracera le fallback.
     if _allows_unconfigured_ocr_fallback():
         return MockOcrProvider()
 
@@ -181,8 +292,21 @@ def get_ocr_provider(provider_name: str | None = None) -> OcrProvider:
 
 
 def extract_text_from_document(storage_path: str, content_type: str | None) -> tuple[str, str]:
+    """Compat (anciens tests) : texte + nom du provider, sans confiances."""
     provider = get_ocr_provider()
     return provider.extract_text(storage_path, content_type), provider.name
+
+
+def extract_ocr_from_document(
+    storage_path: str, content_type: str | None, provider_name: str | None = None
+) -> OcrProviderResult:
+    """Nouveau flux : résultat OCR complet (texte + provider réel + confiances éventuelles).
+
+    ``provider_name`` permet de choisir le provider à l'appel (sinon settings.ocr_provider).
+    Le ``.provider`` retourné est le provider RÉEL (``mock`` après fallback local).
+    """
+    provider = get_ocr_provider(provider_name)
+    return provider.extract(storage_path, content_type)
 
 
 def _extract_text_with_gemini(storage_path: str, content_type: str | None) -> str:
@@ -266,6 +390,98 @@ def _extract_gemini_text(payload: dict[str, Any]) -> str:
     if not text_content:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Gemini OCR response is empty")
     return text_content
+
+
+def _extract_with_mistral(storage_path: str, content_type: str | None) -> OcrProviderResult:
+    path = Path(storage_path)
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document file not found")
+
+    mime = (content_type or "application/octet-stream").lower()
+    data_url = f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
+    # Règle document.type : PDF → document_url ; image/* → image_url.
+    if mime == "application/pdf":
+        document = {"type": "document_url", "document_url": data_url}
+    else:
+        document = {"type": "image_url", "image_url": data_url}
+
+    payload = {
+        "model": settings.mistral_ocr_model,
+        "document": document,
+        "include_image_base64": False,
+        "include_blocks": settings.mistral_include_blocks,
+        "confidence_scores_granularity": settings.mistral_confidence_granularity,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.mistral_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    # Timeout large (OCR documentaire multi-pages) ; erreur HTTP = définitive (pas de retry).
+    try:
+        with httpx.Client(timeout=180.0) as client:
+            response = client.post(_mistral_ocr_url(), headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Mistral OCR request failed") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Mistral OCR service unavailable") from exc
+
+    return _parse_mistral_response(data)
+
+
+def _collect_word_confidences(node: Any, out: list[dict]) -> None:
+    """Récolte récursivement les confiances OCR machine par mot.
+
+    Robuste à la forme exacte de la réponse Mistral : tout dict portant à la fois un
+    champ texte (``text``/``word``/``token``) ET un score (``confidence``/``score``)
+    numérique est récolté. JAMAIS de score inventé ; les bool sont ignorés."""
+    if isinstance(node, dict):
+        text_value = node.get("text") or node.get("word") or node.get("token")
+        score = node.get("confidence")
+        if score is None:
+            score = node.get("score")
+        if isinstance(text_value, str) and isinstance(score, (int, float)) and not isinstance(score, bool):
+            cleaned = text_value.strip()
+            if cleaned:
+                out.append({"text": cleaned, "confidence": float(score)})
+        for value in node.values():
+            _collect_word_confidences(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_word_confidences(value, out)
+
+
+def _parse_mistral_response(data: dict[str, Any]) -> OcrProviderResult:
+    pages = data.get("pages") or []
+    texts: list[str] = []
+    page_confidences: list[float] = []
+    word_confidences: list[dict] = []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        markdown = page.get("markdown")
+        if isinstance(markdown, str):
+            texts.append(markdown)
+        page_score = page.get("page_confidence")
+        if isinstance(page_score, (int, float)) and not isinstance(page_score, bool):
+            page_confidences.append(float(page_score))
+        _collect_word_confidences(page, word_confidences)
+
+    text_content = "\n".join(texts).strip()
+    if not text_content:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Mistral OCR response is empty")
+
+    page_confidence = sum(page_confidences) / len(page_confidences) if page_confidences else None
+    return OcrProviderResult(
+        text=text_content,
+        provider="mistral",
+        model=settings.mistral_ocr_model,
+        raw_response=data,
+        page_confidence=page_confidence,
+        word_confidences=word_confidences or None,
+    )
 
 
 def _extract_text_with_azure(storage_path: str, content_type: str | None) -> str:

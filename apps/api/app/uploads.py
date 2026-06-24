@@ -41,6 +41,9 @@ class ExtractedSurveyPoint:
     label: str
     x: float
     y: float
+    # Confiance OCR MACHINE par borne (ex. agrégat des word_confidence_scores Mistral) :
+    # None si non fournie ou non associable (jamais inventée). Distincte de human_validated.
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)
@@ -62,21 +65,94 @@ _COORDINATE_LINE_PATTERN = re.compile(
 )
 _PARCEL_HEADING_PATTERN = re.compile(r"\bparcelle\s+(?P<label>[A-Za-z0-9_-]+)", re.IGNORECASE)
 _SURFACE_LINE_PATTERN = re.compile(r"\b(surface|superficie)\b", re.IGNORECASE)
+# Tableau Markdown (Mistral OCR) : `| B1 | 402119.76 | 725732.25 |`, `| B.1 | ... |`.
+# Un nombre de coordonnée = au moins 2 chiffres, décimale . ou , optionnelle.
+_MD_NUMBER_RE = re.compile(r"^-?\d{2,}(?:[.,]\d+)?$")
 
 
-def _parse_coordinate_line(line: str) -> ExtractedSurveyPoint | None:
+def _parse_simple_tokens(line: str) -> tuple[str, str, str] | None:
+    """Ligne simple `LABEL X Y` (tolérante aux sorties vision verbeux). Renvoie les tokens BRUTS."""
     match = _COORDINATE_LINE_PATTERN.match(line.strip())
     if match is None:
         return None
-
-    return ExtractedSurveyPoint(
-        label=match.group("label"),
-        x=float(match.group("x").replace(",", ".")),
-        y=float(match.group("y").replace(",", ".")),
-    )
+    return match.group("label"), match.group("x"), match.group("y")
 
 
-def extract_parcels_from_ocr_text(ocr_text: str) -> list[ExtractedParcel]:
+def _parse_markdown_tokens(line: str) -> tuple[str, str, str] | None:
+    """Ligne de tableau Markdown `| Borne | X | Y |`. Renvoie les tokens BRUTS, ou None pour
+    une ligne d'en-tête (X/Y non numériques) ou un séparateur `|---|---|`."""
+    stripped = line.strip()
+    if "|" not in stripped:
+        return None
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    cells = [cell for cell in cells if cell != ""]
+    if len(cells) < 3:
+        return None
+    # Séparateur Markdown (`---`, `:---:`) : aucune donnée.
+    if all(set(cell) <= set("-:= ") for cell in cells):
+        return None
+    label = cells[0]
+    numbers = [cell for cell in cells[1:] if _MD_NUMBER_RE.match(cell)]
+    if len(numbers) < 2:
+        # En-tête (Borne | X | Y) : X/Y non numériques → ignoré, ne casse pas le parser.
+        return None
+    if not re.search(r"\d", label):
+        # Libellé sans chiffre (ex. en-tête « Borne ») → pas une vraie borne.
+        return None
+    return label, numbers[0], numbers[1]
+
+
+def _parse_point_tokens(line: str) -> tuple[str, str, str] | None:
+    """Tokens bruts d'une borne : ligne simple d'abord, puis tableau Markdown."""
+    return _parse_simple_tokens(line) or _parse_markdown_tokens(line)
+
+
+def _build_confidence_lookup(word_confidences: list[dict] | None) -> dict[str, float]:
+    """Index {texte → confiance} depuis les word_confidence_scores (ex. Mistral)."""
+    lookup: dict[str, float] = {}
+    for entry in word_confidences or []:
+        if not isinstance(entry, dict):
+            continue
+        text_value = entry.get("text")
+        score = entry.get("confidence")
+        if isinstance(text_value, str) and isinstance(score, (int, float)) and not isinstance(score, bool):
+            key = text_value.strip()
+            if key and key not in lookup:
+                lookup[key] = float(score)
+    return lookup
+
+
+def _confidence_for_tokens(tokens: tuple[str, str, str], lookup: dict[str, float]) -> float | None:
+    """Confiance OCR d'une borne = MOYENNE des confiances de label + X + Y.
+
+    Stratégie prudente : si UN seul token n'a pas de score associable, on renvoie None
+    (jamais de confiance inventée). Distincte de la validation humaine."""
+    if not lookup:
+        return None
+    scores: list[float] = []
+    for token in tokens:
+        score = lookup.get(token)
+        if score is None:
+            score = lookup.get(token.replace(",", "."))
+        if score is None:
+            return None  # association impossible → ne jamais inventer
+        scores.append(score)
+    return sum(scores) / len(scores)
+
+
+def _parse_coordinate_line(line: str) -> ExtractedSurveyPoint | None:
+    """Compat : conserve l'API d'origine (sans confiance)."""
+    tokens = _parse_point_tokens(line)
+    if tokens is None:
+        return None
+    label, x_raw, y_raw = tokens
+    return ExtractedSurveyPoint(label=label, x=float(x_raw.replace(",", ".")), y=float(y_raw.replace(",", ".")))
+
+
+def extract_parcels_from_ocr_text(
+    ocr_text: str, word_confidences: list[dict] | None = None
+) -> list[ExtractedParcel]:
+    lookup = _build_confidence_lookup(word_confidences)
     parcels: list[ExtractedParcel] = []
     current_label: str | None = None
     current_surface: int | None = None
@@ -106,9 +182,15 @@ def extract_parcels_from_ocr_text(ocr_text: str) -> list[ExtractedParcel]:
             if parsed_surface is not None:
                 current_surface = parsed_surface
 
-        point = _parse_coordinate_line(line)
-        if point is None:
+        tokens = _parse_point_tokens(line)
+        if tokens is None:
             continue
+        point = ExtractedSurveyPoint(
+            label=tokens[0],
+            x=float(tokens[1].replace(",", ".")),
+            y=float(tokens[2].replace(",", ".")),
+            confidence=_confidence_for_tokens(tokens, lookup),
+        )
 
         existing = next((p for p in current_points if p.label == point.label), None)
         if existing is not None:
@@ -146,6 +228,7 @@ def store_extracted_parcels(
     document_id: str,
     ocr_text: str,
     db: Session,
+    word_confidences: list[dict] | None = None,
 ) -> tuple[list[ExtractedParcel], CRSDetectionResult]:
     """Parse les parcelles du texte OCR, détecte le CRS et les persiste (idempotent).
 
@@ -154,7 +237,7 @@ def store_extracted_parcels(
     (EPSG:32631/4326) ; sinon (LOCAL_ONLY/UNKNOWN/NEEDS_GEOREFERENCING) on conserve
     les coordonnées source SANS géométrie WGS84 inventée.
     """
-    parcels = extract_parcels_from_ocr_text(ocr_text)
+    parcels = extract_parcels_from_ocr_text(ocr_text, word_confidences=word_confidences)
     all_coordinates = [[point.x, point.y] for parcel in parcels for point in parcel.points]
     detection = detect_crs(text=ocr_text, coordinates=all_coordinates or None)
     if not parcels:
@@ -220,9 +303,10 @@ def store_extracted_parcels(
                 "point_index": point_index,
                 "source_x": point.x,
                 "source_y": point.y,
-                # Confiance OCR machine non fournie par le parser → None (jamais 0) ;
-                # validation humaine = False à l'extraction.
-                "confidence": None,
+                # Confiance OCR MACHINE par borne (Mistral word scores agrégés) ou None si le
+                # provider n'en fournit pas / non associable (jamais inventée, jamais 0) ;
+                # validation humaine = False à l'extraction (indicateur séparé).
+                "confidence": point.confidence,
                 "human_validated": False,
                 "created_at": created_at,
             }
