@@ -1,9 +1,12 @@
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+from pyproj import Transformer
 
 from app.database import get_db
 from app.main import app
+
+_TO_UTM = Transformer.from_crs("EPSG:4326", "EPSG:32631", always_xy=True)
 
 
 class FakeResult:
@@ -337,27 +340,57 @@ def test_audit_marks_parcel_without_enough_points_as_invalid_geometry():
     payload = response.json()
     assert payload["risk_level"] == "high"
     assert payload["technical_score"] == 35
-    assert payload["parcels"] == [
-        {
-            "parcel_id": "parcel-a",
-            "label": "Parcelle A",
-            "extraction_score": None,
-            "extraction_score_status": "needs_human_validation",
-            "human_validated": False,
-            "declared_surface_m2": 176.0,
-            "calculated_surface_m2": None,
-            "invalid_geometry": True,
-            "technical_score": 35,
-            "risk_level": "high",
-            "warnings": [
-                "Aucune comparaison cadastrale officielle effectuée.",
-                "Incohérence géométrique détectée sur Parcelle A.",
-            ],
-        }
+    assert len(payload["parcels"]) == 1
+    parcel = payload["parcels"][0]
+    assert parcel["parcel_id"] == "parcel-a"
+    assert parcel["label"] == "Parcelle A"
+    assert parcel["extraction_score"] is None
+    assert parcel["extraction_score_status"] == "needs_human_validation"
+    assert parcel["human_validated"] is False
+    assert parcel["declared_surface_m2"] == 176.0
+    assert parcel["calculated_surface_m2"] is None
+    assert parcel["invalid_geometry"] is True
+    assert parcel["technical_score"] == 35
+    assert parcel["risk_level"] == "high"
+    assert parcel["warnings"] == [
+        "Aucune comparaison cadastrale officielle effectuée.",
+        "Incohérence géométrique détectée sur Parcelle A.",
     ]
+    # Contrôle territorial : 2 bornes (< 3) → géométrie invalide pour le contrôle.
+    assert parcel["territory_status"] == "invalid_geometry"
     assert payload["warnings"] == [
         "Aucune comparaison cadastrale officielle effectuée.",
         "Incohérence géométrique détectée sur Parcelle A.",
         "Score d'extraction indisponible : validation humaine des coordonnées requise.",
     ]
 
+
+
+def test_audit_penalizes_technical_score_when_outside_benin():
+    # 8. Parcelle valide géométriquement mais géoréférencée HORS Bénin (Paris) →
+    # technical_score plafonné, risque escaladé, warning territorial.
+    paris = [(2.34, 48.85), (2.36, 48.85), (2.36, 48.87), (2.34, 48.87)]
+    parcel_rows = [
+        {
+            "parcel_id": "parcel-paris",
+            "label": "Parcelle hors Bénin",
+            "declared_surface_m2": 500,
+            "detected_crs": "EPSG:32631",
+            "source_x": _TO_UTM.transform(lon, lat)[0],
+            "source_y": _TO_UTM.transform(lon, lat)[1],
+        }
+        for lon, lat in paris
+    ]
+    session = FakeWorkflowSession(status="VALIDATED", parcel_rows=parcel_rows)
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
+    payload = client.post("/api/projects/project-1/audit").json()
+    parcel = payload["parcels"][0]
+    assert parcel["territory_status"] == "outside_benin"
+    assert parcel["technical_score"] <= 20
+    assert "Le tracé géoréférencé tombe hors du territoire béninois." in parcel["warnings"]
+    # Agrégat projet exposé.
+    assert payload["territory_status"] == "outside_benin"
+    assert payload["territory_risk_level"] == "critical"
+    assert "Le tracé géoréférencé tombe hors du territoire béninois." in payload["territory_warnings"]
