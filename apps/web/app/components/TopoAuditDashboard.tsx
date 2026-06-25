@@ -7,7 +7,7 @@ import type { FeatureCollection, Polygon } from "geojson";
 
 import ParcelMap from "./ParcelMap";
 import { authHeaders, loadToken, saveToken, withAuth } from "../lib/authClient";
-import { extractionScoreText, isExtractionScoreNull } from "../lib/auditFormat";
+import { extractionDisplay, extractionScoreText, isExtractionScoreNull } from "../lib/auditFormat";
 import { borneToApi, canConfirmParcel, confidenceLabel, editBorne } from "../lib/bornes";
 import {
   DEFAULT_OCR_PROVIDER,
@@ -45,6 +45,7 @@ type S = Record<string, string>;
 type AuditApiResponse = {
   extraction_score: number | null;
   extraction_score_status?: string;
+  human_validation_score?: number | null;
   technical_score: number;
   risk_level: string;
   warnings: string[];
@@ -641,17 +642,21 @@ export default function TopoAuditDashboard() {
       high: { l: s.risk_high, c: t.high, soft: t.highSoft, h: s.hint_high },
     };
     const rk = riskMap[ar.risk_level] ?? { l: s.risk_ins, c: t.faint, soft: t.panel2, h: s.hint_ins };
-    const ocrNull = isExtractionScoreNull(ar.extraction_score);
+    // Score OCR machine, sinon repli sur le score de VALIDATION HUMAINE (« Validé · X/100 »).
+    const ocrDisp = extractionDisplay(ar.extraction_score, ar.human_validation_score, lang);
+    const gauge = ocrDisp.gaugeScore;
     return {
       ...view.audit,
       ocrScore: ar.extraction_score,
-      ocrScoreNull: ocrNull,
+      ocrScoreNull: ocrDisp.nullScore,
+      ocrValidated: ocrDisp.validated,
+      ocrLabel: ocrDisp.label,
       ocrScoreStatus: ar.extraction_score_status,
       techScore: ar.technical_score,
-      ocrColor: ocrNull ? t.faint : sc(ar.extraction_score as number),
+      ocrColor: ocrDisp.nullScore ? t.faint : ocrDisp.validated ? t.low : sc(gauge as number),
       techColor: sc(ar.technical_score),
-      // Score null → jauge vide (0 dash) ; on n'affichera PAS de valeur numérique.
-      ocrDash: ocrNull ? `0 ${C.toFixed(1)}` : `${((C * (ar.extraction_score as number)) / 100).toFixed(1)} ${C.toFixed(1)}`,
+      // Jauge remplie au score affiché (OCR ou validation humaine) ; vide si « À valider ».
+      ocrDash: gauge == null ? `0 ${C.toFixed(1)}` : `${((C * gauge) / 100).toFixed(1)} ${C.toFixed(1)}`,
       techDash: `${((C * ar.technical_score) / 100).toFixed(1)} ${C.toFixed(1)}`,
       riskLabel: rk.l,
       riskColor: rk.c,
@@ -1042,7 +1047,7 @@ export default function TopoAuditDashboard() {
                   <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: t.sub, maxWidth: 680 }}>{s.audit_sub}</p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.2fr", gap: 16, marginBottom: 16 }}>
-                  {[{ label: s.score_ocr, score: auditView.ocrScore, color: auditView.ocrColor, dash: auditView.ocrDash, nullScore: Boolean((auditView as { ocrScoreNull?: boolean }).ocrScoreNull) }, { label: s.score_tech, score: auditView.techScore, color: auditView.techColor, dash: auditView.techDash, nullScore: false }].map((g, i) => (
+                  {[{ label: s.score_ocr, score: auditView.ocrScore, color: auditView.ocrColor, dash: auditView.ocrDash, nullScore: Boolean((auditView as { ocrScoreNull?: boolean }).ocrScoreNull), validated: Boolean((auditView as { ocrValidated?: boolean }).ocrValidated), displayLabel: String((auditView as { ocrLabel?: string }).ocrLabel ?? "") }, { label: s.score_tech, score: auditView.techScore, color: auditView.techColor, dash: auditView.techDash, nullScore: false, validated: false, displayLabel: "" }].map((g, i) => (
                     <div key={i} style={{ ...panelCard, padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
                       <svg width="76" height="76" viewBox="0 0 76 76">
                         <circle cx="38" cy="38" r="32" fill="none" stroke={t.line} strokeWidth="7" />
@@ -1052,6 +1057,8 @@ export default function TopoAuditDashboard() {
                         <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em", color: t.faint, marginBottom: 4 }}>{g.label}</div>
                         {g.nullScore ? (
                           <div style={{ fontSize: 17, fontWeight: 700, color: t.high, lineHeight: 1.1 }}>{extractionScoreText(null, lang)}</div>
+                        ) : g.validated ? (
+                          <div style={{ fontSize: 17, fontWeight: 700, color: t.low, lineHeight: 1.15 }}>{g.displayLabel}</div>
                         ) : (
                           <div style={{ fontSize: 30, fontWeight: 700, fontFamily: MONO, lineHeight: 1 }}>{g.score}<span style={{ fontSize: 15, color: t.faint }}>/100</span></div>
                         )}

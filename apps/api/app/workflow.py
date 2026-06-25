@@ -42,6 +42,9 @@ class ParcelAuditResult(BaseModel):
     extraction_score_status: str = SCORE_STATUS_COMPUTED
     # Indicateur SÉPARÉ de la validation humaine — n'influence PAS extraction_score.
     human_validated: bool = False
+    # Score de VALIDATION HUMAINE (% de bornes cochées « Validé ») — distinct du score OCR
+    # machine. Affiché en repli (« Validé · X/100 ») quand l'OCR ne fournit pas de score.
+    human_validation_score: int | None = Field(default=None, ge=0, le=100)
     declared_surface_m2: float | None = Field(default=None, gt=0)
     calculated_surface_m2: float | None = Field(default=None, ge=0)
     invalid_geometry: bool = False
@@ -62,6 +65,7 @@ class AuditResponse(ProjectWorkflowResponse):
     extraction_score: int | None = Field(default=None, ge=0, le=100)
     extraction_score_status: str = SCORE_STATUS_COMPUTED
     human_validated: bool = False
+    human_validation_score: int | None = Field(default=None, ge=0, le=100)
     technical_score: int = Field(ge=0, le=100)
     risk_level: str
     warnings: list[str]
@@ -85,6 +89,7 @@ class _AuditInputs(BaseModel):
     label: str = "Parcelle validée"
     detected_crs: str | None = None
     point_count: int = 0
+    validated_point_count: int = 0
     average_point_confidence: float | None = Field(default=None, ge=0, le=1)
     territory: TerritoryCheckResult | None = None
 
@@ -228,6 +233,16 @@ def _coerce_confidence(value: object) -> float | None:
     return max(0.0, min(1.0, confidence))
 
 
+def _human_validation_score(validated_count: int, total_count: int) -> int | None:
+    """Score de VALIDATION HUMAINE = % de bornes cochées « Validé ».
+
+    Distinct du score OCR machine (jamais confondu). None si aucune borne validée → la
+    carte affiche « À valider »."""
+    if total_count <= 0 or validated_count <= 0:
+        return None
+    return round(validated_count / total_count * 100)
+
+
 def _compute_extraction_score(
     *,
     point_count: int,
@@ -312,6 +327,7 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
         point_count = len(coordinates) if isinstance(coordinates, list) else 0
         hv_list = parcel["human_validated"] if isinstance(parcel["human_validated"], list) else []
         parcel_human_validated = len(hv_list) > 0 and all(hv_list)
+        validated_point_count = sum(1 for v in hv_list if v)
         # IMPORTANT : la validation humaine N'est PAS passée à _compute_extraction_score —
         # le score d'extraction reste fondé sur les preuves OCR réelles (confiance machine).
         score_result = _compute_extraction_score(
@@ -337,6 +353,7 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                 invalid_geometry=invalid_geometry,
                 detected_crs=detected_crs,
                 point_count=point_count,
+                validated_point_count=validated_point_count,
                 average_point_confidence=average_confidence,
                 territory=territory,
             )
@@ -519,6 +536,7 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
                 extraction_score=inputs.extraction_score,
                 extraction_score_status=inputs.extraction_score_status,
                 human_validated=inputs.human_validated,
+                human_validation_score=_human_validation_score(inputs.validated_point_count, inputs.point_count),
                 declared_surface_m2=inputs.declared_surface_m2,
                 calculated_surface_m2=inputs.calculated_surface_m2,
                 invalid_geometry=inputs.invalid_geometry,
@@ -558,6 +576,11 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
 
     # Indicateur projet : toutes les bornes de toutes les parcelles validées humainement.
     project_human_validated = len(parcel_results) > 0 and all(parcel.human_validated for parcel in parcel_results)
+    # Score de validation humaine projet = % de l'ENSEMBLE des bornes cochées (séparé du OCR).
+    project_human_validation_score = _human_validation_score(
+        sum(i.validated_point_count for i in inputs_by_parcel),
+        sum(i.point_count for i in inputs_by_parcel),
+    )
 
     # Agrégat territorial : la « pire » parcelle (hors Bénin > frontière > … > non applicable).
     worst_territory = max(parcel_results, key=lambda p: _TERRITORY_SEVERITY.get(p.territory_status, 0))
@@ -581,6 +604,7 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
         extraction_score=project_extraction_score,
         extraction_score_status=project_extraction_status,
         human_validated=project_human_validated,
+        human_validation_score=project_human_validation_score,
         technical_score=min(parcel.technical_score for parcel in parcel_results),
         risk_level=_aggregate_risk_level(parcel_results),
         warnings=project_warnings,

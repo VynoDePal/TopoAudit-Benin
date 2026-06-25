@@ -30,6 +30,19 @@
             "title": "Human Validated",
             "type": "boolean"
           },
+          "human_validation_score": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Human Validation Score"
+          },
           "parcels": {
             "items": {
               "$ref": "#/components/schemas/ParcelAuditResult"
@@ -617,6 +630,19 @@
             "default": false,
             "title": "Human Validated",
             "type": "boolean"
+          },
+          "human_validation_score": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Human Validation Score"
           },
           "invalid_geometry": {
             "default": false,

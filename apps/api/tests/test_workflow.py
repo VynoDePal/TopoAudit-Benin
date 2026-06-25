@@ -394,3 +394,34 @@ def test_audit_penalizes_technical_score_when_outside_benin():
     assert payload["territory_status"] == "outside_benin"
     assert payload["territory_risk_level"] == "critical"
     assert "Le tracé géoréférencé tombe hors du territoire béninois." in payload["territory_warnings"]
+
+
+def test_audit_exposes_human_validation_score_separate_from_ocr():
+    # Bornes cochées « Validé » mais SANS confiance OCR machine (cas Gemini) :
+    # score d'extraction reste null (jamais inventé), mais human_validation_score = 100 %.
+    square = [(2.35, 9.50), (2.36, 9.50), (2.36, 9.51), (2.35, 9.51)]  # centre Bénin
+    parcel_rows = [
+        {
+            "parcel_id": "parcel-a",
+            "label": "Parcelle A",
+            "declared_surface_m2": 500,
+            "detected_crs": "EPSG:32631",
+            "source_x": _TO_UTM.transform(lon, lat)[0],
+            "source_y": _TO_UTM.transform(lon, lat)[1],
+            "confidence": None,
+            "human_validated": True,
+        }
+        for lon, lat in square
+    ]
+    session = FakeWorkflowSession(status="VALIDATED", parcel_rows=parcel_rows)
+    app.dependency_overrides[get_db] = override_db(session)
+    client = TestClient(app)
+
+    payload = client.post("/api/projects/project-1/audit").json()
+    # Pas de confiance OCR machine → score d'extraction reste null (jamais inventé).
+    assert payload["extraction_score"] is None
+    assert payload["extraction_score_status"] == "needs_human_validation"
+    # Score de VALIDATION HUMAINE = 100 % (toutes les bornes cochées), distinct du OCR.
+    assert payload["human_validation_score"] == 100
+    assert payload["parcels"][0]["human_validation_score"] == 100
+    assert payload["parcels"][0]["human_validated"] is True

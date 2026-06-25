@@ -32,3 +32,31 @@ test("un score réel (y compris 0) reste numérique, pas converti", () => {
   assert.ok(!fmt.isExtractionScoreNull(0));
   assert.ok(!fmt.isExtractionScoreNull(85));
 });
+
+test("extractionDisplay : score OCR machine présent → X/100 (pas validé)", () => {
+  const d = fmt.extractionDisplay(85, null, "fr");
+  assert.equal(d.label, "85/100");
+  assert.equal(d.validated, false);
+  assert.equal(d.nullScore, false);
+  assert.equal(d.gaugeScore, 85);
+});
+
+test("extractionDisplay : pas de score OCR mais bornes cochées → « Validé · X/100 »", () => {
+  const d = fmt.extractionDisplay(null, 100, "fr");
+  assert.equal(d.label, "Validé · 100/100");
+  assert.equal(d.validated, true);
+  assert.equal(d.nullScore, false);
+  assert.equal(d.gaugeScore, 100);
+  // validation partielle
+  const partial = fmt.extractionDisplay(null, 73, "fr");
+  assert.equal(partial.label, "Validé · 73/100");
+  assert.equal(partial.gaugeScore, 73);
+});
+
+test("extractionDisplay : ni OCR ni validation → « À valider »", () => {
+  const d = fmt.extractionDisplay(null, null, "fr");
+  assert.equal(d.label, "À valider");
+  assert.equal(d.validated, false);
+  assert.equal(d.nullScore, true);
+  assert.equal(d.gaugeScore, null);
+});
