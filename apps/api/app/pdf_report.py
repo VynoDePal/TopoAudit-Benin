@@ -22,9 +22,12 @@ def _format_surface(value: float | None) -> str:
     return "—" if value is None else f"{value:.2f} m²"
 
 
-def _format_extraction_score(score: int | None, status: str) -> str:
-    """Score sur 100, ou mention explicite quand la validation humaine est requise."""
+def _format_extraction_score(score: int | None, status: str, human_validation_score: int | None = None) -> str:
+    """Score OCR sur 100 ; sinon score de VALIDATION HUMAINE (« Validé · X/100 ») si des
+    bornes ont été cochées ; sinon « Validation humaine requise »."""
     if score is None or status == SCORE_STATUS_NEEDS_HUMAN_VALIDATION:
+        if human_validation_score is not None:
+            return f"Validé · {human_validation_score}/100"
         return "Validation humaine requise"
     return f"{score}/100"
 
@@ -65,7 +68,7 @@ def _parcel_card(parcel: ParcelAuditResult, index: int) -> str:
                 <tbody>
                     <tr><th>Surface déclarée</th><td>{escape(_format_surface(parcel.declared_surface_m2))}</td></tr>
                     <tr><th>Surface calculée</th><td>{escape(_format_surface(parcel.calculated_surface_m2))}</td></tr>
-                    <tr><th>Score d'extraction</th><td>{escape(_format_extraction_score(parcel.extraction_score, parcel.extraction_score_status))}</td></tr>
+                    <tr><th>Score d'extraction</th><td>{escape(_format_extraction_score(parcel.extraction_score, parcel.extraction_score_status, parcel.human_validation_score))}</td></tr>
                     <tr><th>Bornes validées humainement</th><td>{"Oui" if parcel.human_validated else "Non"}</td></tr>
                     <tr><th>Score technique</th><td>{parcel.technical_score}/100</td></tr>
                     <tr><th>Niveau de risque</th><td>{escape(_risk_label(parcel.risk_level))}</td></tr>
@@ -118,7 +121,7 @@ def generate_audit_report_pdf(audit: AuditResponse) -> bytes:
                 <tr><th>Projet</th><td>{escape(audit.project_id)}</td></tr>
                 <tr><th>Audit</th><td>{escape(audit.audit_id)}</td></tr>
                 <tr><th>État du workflow</th><td>{escape(audit.state.value)}</td></tr>
-                <tr><th>Score d'extraction</th><td>{escape(_format_extraction_score(audit.extraction_score, audit.extraction_score_status))}</td></tr>
+                <tr><th>Score d'extraction</th><td>{escape(_format_extraction_score(audit.extraction_score, audit.extraction_score_status, audit.human_validation_score))}</td></tr>
                 <tr><th>Bornes validées humainement</th><td>{"Oui" if audit.human_validated else "Non"}</td></tr>
                 <tr><th>Score technique</th><td>{audit.technical_score}/100</td></tr>
                 <tr><th>Niveau de risque</th><td>{escape(_risk_label(audit.risk_level))}</td></tr>
