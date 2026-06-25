@@ -14,6 +14,7 @@ from app.extraction_score import (
 )
 from app.geometry_engine import validate_polygon
 from app.risk_scoring import score_surface_deviation
+from app.territory_check import TerritoryCheckResult, validate_benin_territory
 
 
 class ProjectWorkflowState(StrEnum):
@@ -47,6 +48,13 @@ class ParcelAuditResult(BaseModel):
     technical_score: int = Field(ge=0, le=100)
     risk_level: str
     warnings: list[str]
+    # Contrôle territorial Bénin (P0) — non juridique, prototype grossier.
+    territory_status: str = "unknown"
+    territory_risk_level: str = "not_applicable"
+    territory_message: str = ""
+    territory_intersection_ratio: float | None = None
+    territory_centroid_lon: float | None = None
+    territory_centroid_lat: float | None = None
 
 
 class AuditResponse(ProjectWorkflowResponse):
@@ -58,6 +66,12 @@ class AuditResponse(ProjectWorkflowResponse):
     risk_level: str
     warnings: list[str]
     parcels: list[ParcelAuditResult] = Field(default_factory=list)
+    # Contrôle territorial Bénin agrégé (pire cas des parcelles).
+    territory_status: str = "unknown"
+    territory_risk_level: str = "not_applicable"
+    territory_warnings: list[str] = Field(default_factory=list)
+    territory_centroid_lon: float | None = None
+    territory_centroid_lat: float | None = None
 
 
 class _AuditInputs(BaseModel):
@@ -72,6 +86,7 @@ class _AuditInputs(BaseModel):
     detected_crs: str | None = None
     point_count: int = 0
     average_point_confidence: float | None = Field(default=None, ge=0, le=1)
+    territory: TerritoryCheckResult | None = None
 
 
 _ALLOWED_PREVIOUS_STATES: dict[ProjectWorkflowState, set[ProjectWorkflowState | None]] = {
@@ -305,6 +320,11 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
             detected_crs=str(parcel["detected_crs"] or ""),
             average_point_confidence=average_confidence,
         )
+        # Contrôle territorial Bénin : sur les coordonnées SOURCE + le CRS détecté. Pour un
+        # CRS local/inconnu, validate_benin_territory renvoie not_applicable (jamais de
+        # transformation forcée).
+        detected_crs = str(parcel["detected_crs"] or "UNKNOWN_CRS")
+        territory = validate_benin_territory(coordinates if isinstance(coordinates, list) else [], detected_crs)
         inputs.append(
             _AuditInputs(
                 parcel_id=str(parcel["parcel_id"]),
@@ -315,9 +335,10 @@ def _load_parcel_audit_inputs(project_id: str, db: Session) -> list[_AuditInputs
                 declared_surface_m2=parcel["declared_surface_m2"],
                 calculated_surface_m2=calculated_surface_m2,
                 invalid_geometry=invalid_geometry,
-                detected_crs=str(parcel["detected_crs"] or ""),
+                detected_crs=detected_crs,
                 point_count=point_count,
                 average_point_confidence=average_confidence,
+                territory=territory,
             )
         )
     return inputs
@@ -437,11 +458,60 @@ def _aggregate_risk_level(parcel_results: list[ParcelAuditResult]) -> str:
     return max(parcel_results, key=lambda result: _RISK_ORDER.get(result.risk_level, -1)).risk_level
 
 
+def _escalate_risk(current: str, target: str) -> str:
+    """Remonte le niveau de risque au max (parmi les types EXISTANTS low/moderate/high)."""
+    return current if _RISK_ORDER.get(current, -1) >= _RISK_ORDER.get(target, -1) else target
+
+
+# Sévérité territoriale pour choisir la « pire » parcelle (agrégat projet).
+_TERRITORY_SEVERITY = {
+    "outside_benin": 4,
+    "near_border_partial": 3,
+    "invalid_geometry": 2,
+    "inside_benin": 1,
+    "not_applicable_local_crs": 0,
+    "unknown": 0,
+}
+_TERRITORY_OUTSIDE_WARNING = "Le tracé géoréférencé tombe hors du territoire béninois."
+_TERRITORY_NEAR_WARNING = "Le tracé géoréférencé chevauche la frontière béninoise (partiellement hors Bénin)."
+_TERRITORY_NOT_APPLICABLE_WARNING = "Contrôle territorial non applicable : CRS local ou inconnu."
+
+
+def _apply_territory_scoring(
+    technical_score: int, risk_level: str, warnings: list[str], territory: TerritoryCheckResult
+) -> tuple[int, str, list[str]]:
+    """Pénalise le score / escalade le risque selon le contrôle territorial (non juridique)."""
+    warnings = list(warnings)
+
+    def add(message: str) -> None:
+        if message not in warnings:
+            warnings.append(message)
+
+    if territory.status == "outside_benin":
+        # Hors Bénin = incohérence grave (CRS/projection) → plafonne le score technique.
+        technical_score = min(technical_score, 20)
+        risk_level = _escalate_risk(risk_level, "high")
+        add(_TERRITORY_OUTSIDE_WARNING)
+    elif territory.status == "near_border_partial":
+        risk_level = _escalate_risk(risk_level, "high")
+        add(_TERRITORY_NEAR_WARNING)
+    elif territory.status == "not_applicable_local_crs":
+        # CRS local/inconnu : NE PAS pénaliser comme un faux levé.
+        add(_TERRITORY_NOT_APPLICABLE_WARNING)
+    return technical_score, risk_level, warnings
+
+
 def create_project_audit(project_id: str, db: Session) -> AuditResponse:
     inputs_by_parcel = _load_audit_inputs(project_id, db)
     parcel_results: list[ParcelAuditResult] = []
     for inputs in inputs_by_parcel:
         technical_score, risk_level, warnings = _compute_audit_result(inputs)
+        territory = inputs.territory or TerritoryCheckResult(
+            status="unknown", risk_level="not_applicable", message=""
+        )
+        technical_score, risk_level, warnings = _apply_territory_scoring(
+            technical_score, risk_level, warnings, territory
+        )
         parcel_results.append(
             ParcelAuditResult(
                 parcel_id=inputs.parcel_id,
@@ -455,6 +525,12 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
                 technical_score=technical_score,
                 risk_level=risk_level,
                 warnings=warnings,
+                territory_status=territory.status,
+                territory_risk_level=territory.risk_level,
+                territory_message=territory.message,
+                territory_intersection_ratio=territory.intersection_ratio,
+                territory_centroid_lon=territory.centroid_lon,
+                territory_centroid_lat=territory.centroid_lat,
             )
         )
 
@@ -483,6 +559,20 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
     # Indicateur projet : toutes les bornes de toutes les parcelles validées humainement.
     project_human_validated = len(parcel_results) > 0 and all(parcel.human_validated for parcel in parcel_results)
 
+    # Agrégat territorial : la « pire » parcelle (hors Bénin > frontière > … > non applicable).
+    worst_territory = max(parcel_results, key=lambda p: _TERRITORY_SEVERITY.get(p.territory_status, 0))
+    territory_warnings: list[str] = []
+    for parcel in parcel_results:
+        if parcel.territory_status == "outside_benin" and _TERRITORY_OUTSIDE_WARNING not in territory_warnings:
+            territory_warnings.append(_TERRITORY_OUTSIDE_WARNING)
+        elif parcel.territory_status == "near_border_partial" and _TERRITORY_NEAR_WARNING not in territory_warnings:
+            territory_warnings.append(_TERRITORY_NEAR_WARNING)
+        elif (
+            parcel.territory_status == "not_applicable_local_crs"
+            and _TERRITORY_NOT_APPLICABLE_WARNING not in territory_warnings
+        ):
+            territory_warnings.append(_TERRITORY_NOT_APPLICABLE_WARNING)
+
     state = transition_project_state(project_id, ProjectWorkflowState.AUDITED, db)
     return AuditResponse(
         project_id=project_id,
@@ -495,4 +585,9 @@ def create_project_audit(project_id: str, db: Session) -> AuditResponse:
         risk_level=_aggregate_risk_level(parcel_results),
         warnings=project_warnings,
         parcels=parcel_results,
+        territory_status=worst_territory.territory_status,
+        territory_risk_level=worst_territory.territory_risk_level,
+        territory_warnings=territory_warnings,
+        territory_centroid_lon=worst_territory.territory_centroid_lon,
+        territory_centroid_lat=worst_territory.territory_centroid_lat,
     )

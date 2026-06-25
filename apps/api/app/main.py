@@ -41,6 +41,7 @@ from app.ocr import (
 )
 from app.pdf_report import generate_audit_report_pdf
 from app.risk_scoring import SurfaceRiskScore, score_surface_deviation
+from app.territory_check import TerritoryCheckResult, validate_benin_territory
 from app.uploads import (
     DocumentUploadResponse,
     create_document_from_upload,
@@ -139,6 +140,13 @@ class OcrRequest(BaseModel):
     document_id: str = Field(min_length=1)
     # Choix optionnel du provider OCR (gemini | mistral | mock | azure). Absent → settings.ocr_provider.
     provider: str | None = Field(default=None, examples=["mistral"])
+
+
+class TerritoryCheckRequest(BaseModel):
+    source_crs: str = Field(min_length=1, examples=["EPSG:32631"])
+    coordinates: list[list[float]] = Field(
+        examples=[[[403825.84, 707630.38], [403836.57, 707626.36], [403840.12, 707641.10]]]
+    )
 
 
 def _database_ready() -> bool:
@@ -572,6 +580,16 @@ def run_document_ocr_from_body(
 @app.post("/api/risk/score-surface", response_model=SurfaceRiskScore, tags=["risk"])
 def score_surface_risk(payload: SurfaceRiskRequest) -> SurfaceRiskScore:
     return score_surface_deviation(payload.declared_surface_m2, payload.calculated_surface_m2)
+
+
+@app.post("/api/territory/benin/check", response_model=TerritoryCheckResult, tags=["territory"])
+def check_benin_territory(payload: TerritoryCheckRequest) -> TerritoryCheckResult:
+    """Contrôle territorial Bénin : la parcelle géoréférencée tombe-t-elle dans le Bénin ?
+
+    CRS local/inconnu → non applicable (jamais classé comme faux levé). Contrôle GROSSIER
+    de prototype (frontière Natural Earth 1:50m), non juridique, non cadastral.
+    """
+    return validate_benin_territory(payload.coordinates, payload.source_crs)
 
 
 @app.get("/api", tags=["system"])

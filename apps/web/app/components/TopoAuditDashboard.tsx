@@ -20,6 +20,7 @@ import {
   pickDefaultProvider,
 } from "../lib/ocrProviders";
 import { isTransformableCrs, toWgs84 } from "../lib/crsClient";
+import { type TerritoryResult, blocksAudit, territoryBadge, territoryCheckBody } from "../lib/territoryClient";
 import {
   confTone,
   DEFAULT_PARCELS,
@@ -48,6 +49,11 @@ type AuditApiResponse = {
   risk_level: string;
   warnings: string[];
   parcels: { label: string; declared_surface_m2: number | null; calculated_surface_m2: number | null; technical_score: number; risk_level: string; warnings: string[] }[];
+  territory_status?: string;
+  territory_risk_level?: string;
+  territory_warnings?: string[];
+  territory_centroid_lon?: number | null;
+  territory_centroid_lat?: number | null;
 };
 
 // ---- carte SVG (porté de buildMap) ----
@@ -150,6 +156,8 @@ export default function TopoAuditDashboard() {
   // Liste des providers OCR (GET /api/ocr/providers) : pilote le défaut + l'état du select.
   const [ocrProviders, setOcrProviders] = useState<OcrProviderInfo[]>([]);
   const [ocrInfo, setOcrInfo] = useState<{ isMock: boolean; configured: string; provider: string; model: string | null; crs: string; scoreStatus: string } | null>(null);
+  // Contrôle territorial Bénin de la parcelle active (étape Validation).
+  const [territory, setTerritory] = useState<TerritoryResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const t = THEMES[themeKey];
@@ -219,6 +227,35 @@ export default function TopoAuditDashboard() {
       cancelled = true;
     };
   }, [apiBaseUrl]);
+  // P0 contrôle territorial : la parcelle active (≥3 bornes) est vérifiée AVANT la carte.
+  const _activeParcel = parcels[activeIdx];
+  const territorySig = _activeParcel
+    ? `${_activeParcel.crs}|${_activeParcel.points.map((p) => `${p.x},${p.y}`).join(";")}`
+    : "";
+  useEffect(() => {
+    if (stage !== "validate" || !_activeParcel) {
+      setTerritory(null);
+      return;
+    }
+    const sourceCrs = _activeParcel.crs === "local" ? "LOCAL_ONLY" : _activeParcel.crs;
+    const body = territoryCheckBody(_activeParcel.points, sourceCrs);
+    if (body.coordinates.length < 3) {
+      setTerritory(null);
+      return;
+    }
+    let cancelled = false;
+    apiJson("POST", "/territory/benin/check", body)
+      .then((r) => {
+        if (!cancelled) setTerritory(r as TerritoryResult);
+      })
+      .catch(() => {
+        if (!cancelled) setTerritory(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, territorySig]);
   const mapFromApi = (apiParcels: any[]): Parcel[] =>
     apiParcels.map((p, i) => ({
       id: p.id ?? `p${i + 1}`,
@@ -826,6 +863,34 @@ export default function TopoAuditDashboard() {
                     )}
                   </div>
                 )}
+                {territory &&
+                  (() => {
+                    const badge = territoryBadge(territory.status, lang);
+                    const palette = {
+                      ok: { bg: "#dcfce7", fg: "#166534", bd: "#22c55e" },
+                      critical: { bg: "#fee2e2", fg: "#991b1b", bd: "#ef4444" },
+                      warn: { bg: "#fef3c7", fg: "#92400e", bd: "#f59e0b" },
+                      neutral: { bg: t.panel2, fg: t.sub, bd: t.line },
+                    }[badge.tone];
+                    return (
+                      <div style={{ marginBottom: 16, padding: "11px 14px", borderRadius: 10, background: palette.bg, color: palette.fg, border: `1px solid ${palette.bd}` }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{lang === "fr" ? "Contrôle territorial Bénin" : "Benin territory check"} — {badge.label}</div>
+                        <div style={{ fontSize: 12.5, lineHeight: 1.45, marginTop: 4 }}>{territory.message}</div>
+                        {territory.status === "outside_benin" && (
+                          <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 6 }}>
+                            {lang === "fr"
+                              ? "Le tracé géoréférencé est hors du territoire béninois. Vérifiez CRS, X/Y et projection."
+                              : "The georeferenced outline is outside Benin. Check CRS, X/Y and projection."}
+                          </div>
+                        )}
+                        {territory.centroid_lat != null && territory.centroid_lon != null && (
+                          <div style={{ fontSize: 11.5, fontFamily: MONO, marginTop: 4 }}>
+                            {lang === "fr" ? "Centroïde" : "Centroid"} : {territory.centroid_lat.toFixed(5)}, {territory.centroid_lon.toFixed(5)} (lat, lon)
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 18, alignItems: "start" }}>
                   <section style={{ ...panelCard, overflow: "hidden", position: "sticky", top: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", borderBottom: `1px solid ${t.line}` }}>
@@ -927,6 +992,13 @@ export default function TopoAuditDashboard() {
                         ))}
                       </div>
                     )}
+                    {territory && blocksAudit(territory.status) && (
+                      <div style={{ marginBottom: 11, padding: "10px 13px", borderRadius: 10, background: "#fee2e2", color: "#991b1b", border: "1px solid #ef4444", fontSize: 12.5, fontWeight: 600, lineHeight: 1.45 }}>
+                        {lang === "fr"
+                          ? "⚠ Le tracé géoréférencé est hors du territoire béninois. Vérifiez CRS, X/Y et projection avant de lancer l'audit."
+                          : "⚠ The georeferenced outline is outside Benin. Check CRS, X/Y and projection before running the audit."}
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 11, justifyContent: "flex-end", alignItems: "center" }}>
                       <span style={{ fontSize: 12, color: errorMsg ? t.high : t.sub, marginRight: "auto" }}>{errorMsg || view.statusMsg}</span>
                       <span style={{ fontSize: 11.5, color: view.active.canConfirm ? t.low : t.mod }}>{view.active.confirmHint}</span>
@@ -969,6 +1041,36 @@ export default function TopoAuditDashboard() {
                     <div style={{ fontSize: 12, color: t.ink, opacity: 0.7 }}>{auditView.riskHint}</div>
                   </div>
                 </div>
+                {auditResult?.territory_status &&
+                  auditResult.territory_status !== "unknown" &&
+                  (() => {
+                    const badge = territoryBadge(auditResult.territory_status as string, lang);
+                    const palette = {
+                      ok: { bg: "#dcfce7", fg: "#166534", bd: "#22c55e" },
+                      critical: { bg: "#fee2e2", fg: "#991b1b", bd: "#ef4444" },
+                      warn: { bg: "#fef3c7", fg: "#92400e", bd: "#f59e0b" },
+                      neutral: { bg: t.panel2, fg: t.sub, bd: t.line },
+                    }[badge.tone];
+                    return (
+                      <div style={{ marginBottom: 16, padding: "12px 15px", borderRadius: 12, background: palette.bg, color: palette.fg, border: `1px solid ${palette.bd}` }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 13, fontWeight: 700 }}>{lang === "fr" ? "Contrôle territorial Bénin" : "Benin territory check"}</span>
+                          <span style={{ fontSize: 12.5, fontWeight: 700 }}>{badge.label}</span>
+                          {auditResult.territory_risk_level === "critical" && (
+                            <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 999, background: "#991b1b", color: "#fff" }}>{lang === "fr" ? "Risque critique" : "Critical risk"}</span>
+                          )}
+                        </div>
+                        {(auditResult.territory_warnings ?? []).map((w, i) => (
+                          <div key={i} style={{ fontSize: 12.5, marginTop: 4 }}>{w}</div>
+                        ))}
+                        {auditResult.territory_centroid_lat != null && auditResult.territory_centroid_lon != null && (
+                          <div style={{ fontSize: 11.5, fontFamily: MONO, marginTop: 4 }}>
+                            {lang === "fr" ? "Centroïde" : "Centroid"} : {auditResult.territory_centroid_lat.toFixed(5)}, {auditResult.territory_centroid_lon.toFixed(5)} (lat, lon)
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
                   <section style={{ ...panelCard, padding: 18 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{s.per_parcel}</div>

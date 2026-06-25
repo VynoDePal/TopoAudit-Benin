@@ -29,6 +29,26 @@ def _format_extraction_score(score: int | None, status: str) -> str:
     return f"{score}/100"
 
 
+_TERRITORY_LABELS = {
+    "inside_benin": "OK — dans le territoire béninois",
+    "outside_benin": "Hors Bénin — risque critique",
+    "near_border_partial": "Chevauche la frontière — à vérifier",
+    "not_applicable_local_crs": "Non applicable (CRS local/inconnu)",
+    "invalid_geometry": "Géométrie invalide",
+    "unknown": "—",
+}
+
+
+def _territory_label(status: str) -> str:
+    return _TERRITORY_LABELS.get(status, status or "—")
+
+
+def _territory_centroid(lon: float | None, lat: float | None) -> str:
+    if lon is None or lat is None:
+        return "—"
+    return f"{lat:.5f}, {lon:.5f} (lat, lon)"
+
+
 def _warning_list(warnings: list[str]) -> str:
     return "".join(f"<li>{escape(warning)}</li>" for warning in warnings)
 
@@ -50,6 +70,8 @@ def _parcel_card(parcel: ParcelAuditResult, index: int) -> str:
                     <tr><th>Score technique</th><td>{parcel.technical_score}/100</td></tr>
                     <tr><th>Niveau de risque</th><td>{escape(_risk_label(parcel.risk_level))}</td></tr>
                     <tr><th>Géométrie</th><td>{geometry_status}</td></tr>
+                    <tr><th>Contrôle territorial Bénin</th><td>{escape(_territory_label(parcel.territory_status))}</td></tr>
+                    <tr><th>Centroïde (lat, lon)</th><td>{escape(_territory_centroid(parcel.territory_centroid_lon, parcel.territory_centroid_lat))}</td></tr>
                 </tbody>
             </table>
             <h4>Alertes de la parcelle</h4>
@@ -100,6 +122,8 @@ def generate_audit_report_pdf(audit: AuditResponse) -> bytes:
                 <tr><th>Bornes validées humainement</th><td>{"Oui" if audit.human_validated else "Non"}</td></tr>
                 <tr><th>Score technique</th><td>{audit.technical_score}/100</td></tr>
                 <tr><th>Niveau de risque</th><td>{escape(_risk_label(audit.risk_level))}</td></tr>
+                <tr><th>Contrôle territorial Bénin</th><td>{escape(_territory_label(audit.territory_status))}{" — Risque critique" if audit.territory_risk_level == "critical" else ""}</td></tr>
+                <tr><th>Centroïde (lat, lon)</th><td>{escape(_territory_centroid(audit.territory_centroid_lon, audit.territory_centroid_lat))}</td></tr>
             </tbody>
         </table>
 

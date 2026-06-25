@@ -55,6 +55,45 @@
             "title": "Technical Score",
             "type": "integer"
           },
+          "territory_centroid_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Territory Centroid Lat"
+          },
+          "territory_centroid_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Territory Centroid Lon"
+          },
+          "territory_risk_level": {
+            "default": "not_applicable",
+            "title": "Territory Risk Level",
+            "type": "string"
+          },
+          "territory_status": {
+            "default": "unknown",
+            "title": "Territory Status",
+            "type": "string"
+          },
+          "territory_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Territory Warnings",
+            "type": "array"
+          },
           "warnings": {
             "items": {
               "type": "string"
@@ -609,6 +648,54 @@
             "title": "Technical Score",
             "type": "integer"
           },
+          "territory_centroid_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Territory Centroid Lat"
+          },
+          "territory_centroid_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Territory Centroid Lon"
+          },
+          "territory_intersection_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Territory Intersection Ratio"
+          },
+          "territory_message": {
+            "default": "",
+            "title": "Territory Message",
+            "type": "string"
+          },
+          "territory_risk_level": {
+            "default": "not_applicable",
+            "title": "Territory Risk Level",
+            "type": "string"
+          },
+          "territory_status": {
+            "default": "unknown",
+            "title": "Territory Status",
+            "type": "string"
+          },
           "warnings": {
             "items": {
               "type": "string"
@@ -1096,6 +1183,137 @@
           "surface_deviation_percent"
         ],
         "title": "SurfaceRiskScore",
+        "type": "object"
+      },
+      "TerritoryCheckRequest": {
+        "properties": {
+          "coordinates": {
+            "examples": [
+              [
+                [
+                  403825.84,
+                  707630.38
+                ],
+                [
+                  403836.57,
+                  707626.36
+                ],
+                [
+                  403840.12,
+                  707641.1
+                ]
+              ]
+            ],
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "source_crs": {
+            "examples": [
+              "EPSG:32631"
+            ],
+            "minLength": 1,
+            "title": "Source Crs",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_crs",
+          "coordinates"
+        ],
+        "title": "TerritoryCheckRequest",
+        "type": "object"
+      },
+      "TerritoryCheckResult": {
+        "description": "Résultat du contrôle territorial Bénin pour un tracé.",
+        "properties": {
+          "centroid_lat": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centroid Lat"
+          },
+          "centroid_lon": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Centroid Lon"
+          },
+          "intersection_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intersection Ratio"
+          },
+          "is_inside_benin": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Inside Benin"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "points_outside_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points Outside Count"
+          },
+          "risk_level": {
+            "description": "low | moderate | high | critical | not_applicable",
+            "examples": [
+              "low"
+            ],
+            "title": "Risk Level",
+            "type": "string"
+          },
+          "status": {
+            "description": "inside_benin | outside_benin | near_border_partial | not_applicable_local_crs | invalid_geometry | unknown",
+            "examples": [
+              "inside_benin"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "risk_level",
+          "message"
+        ],
+        "title": "TerritoryCheckResult",
         "type": "object"
       },
       "ValidationError": {
@@ -1899,6 +2117,48 @@
         "summary": "Score Surface Risk",
         "tags": [
           "risk"
+        ]
+      }
+    },
+    "/api/territory/benin/check": {
+      "post": {
+        "description": "Contrôle territorial Bénin : la parcelle géoréférencée tombe-t-elle dans le Bénin ?\n\nCRS local/inconnu → non applicable (jamais classé comme faux levé). Contrôle GROSSIER\nde prototype (frontière Natural Earth 1:50m), non juridique, non cadastral.",
+        "operationId": "check_benin_territory_api_territory_benin_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerritoryCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerritoryCheckResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Check Benin Territory",
+        "tags": [
+          "territory"
         ]
       }
     }
