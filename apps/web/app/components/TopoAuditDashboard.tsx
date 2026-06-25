@@ -427,6 +427,13 @@ export default function TopoAuditDashboard() {
           : { ...p, confirmed: false, points: p.points.map((pt, j) => (j === rIdx ? { ...pt, validated: !(pt.validated === true) } : pt)) },
       ),
     );
+  // Tout valider / tout décocher d'un coup (au lieu de cocher borne par borne).
+  const setAllValidated = (pIdx: number, value: boolean) =>
+    setParcels((prev) =>
+      prev.map((p, i) =>
+        i !== pIdx ? p : { ...p, confirmed: false, points: p.points.map((pt) => ({ ...pt, validated: value })) },
+      ),
+    );
 
   // ---- derived (équivalent renderVals) ----
   const view = useMemo(() => {
@@ -968,9 +975,25 @@ export default function TopoAuditDashboard() {
                         </tbody>
                       </table>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderTop: `1px solid ${t.line2}`, background: t.panel2 }}>
-                        <button onClick={() => addPoint(activeIdx)} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${t.line}`, background: t.panel, borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, color: t.accent, cursor: "pointer" }}>
-                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>{s.add_borne}
-                        </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <button onClick={() => addPoint(activeIdx)} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${t.line}`, background: t.panel, borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, color: t.accent, cursor: "pointer" }}>
+                            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>{s.add_borne}
+                          </button>
+                          {(() => {
+                            const allValidated = view.active.rows.length > 0 && view.active.rows.every((r) => r.validated);
+                            return (
+                              <button
+                                onClick={() => setAllValidated(activeIdx, !allValidated)}
+                                disabled={view.active.rows.length === 0}
+                                title={lang === "fr" ? "Cocher/décocher toutes les bornes" : "Check/uncheck all corners"}
+                                style={{ display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${allValidated ? t.low : t.line}`, background: allValidated ? t.lowSoft : t.panel, borderRadius: 8, padding: "7px 12px", fontSize: 12.5, fontWeight: 600, color: allValidated ? t.low : t.accent, cursor: view.active.rows.length === 0 ? "not-allowed" : "pointer", opacity: view.active.rows.length === 0 ? 0.5 : 1 }}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                {allValidated ? (lang === "fr" ? "Tout décocher" : "Uncheck all") : (lang === "fr" ? "Tout valider" : "Validate all")}
+                              </button>
+                            );
+                          })()}
+                        </div>
                         <span style={{ fontSize: 11.5, color: t.sub, fontFamily: MONO }}>{view.active.pointCount} {s.bornes}</span>
                       </div>
                     </div>
